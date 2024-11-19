@@ -47,7 +47,7 @@ async fn main() {
         let mut service_names = BTreeMap::new();
         if let Ok(Ok(services)) = timeout(Duration::from_secs(1), dev.services()).await {
             for s in services {
-                let key = s.uuid();
+                let key = format!("{}", s.uuid().as_simple());
                 let value = s
                     .characteristics()
                     .into_iter()
