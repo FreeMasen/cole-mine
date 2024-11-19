@@ -12,13 +12,9 @@ async fn main() {
         .ok()
         .and_then(|a| a.parse::<u64>().ok())
         .unwrap_or(5);
-    let mut unknown_ct = 0;
     let mut stream = discover(true).await.unwrap();
     while let Some(dev) = stream.next().await {
-        let name = dev.local_name().await.unwrap_or_else(|| {
-            unknown_ct += 1;
-            format!("dev-{unknown_ct}")
-        });
+        let name = dev.local_name().await;
         let rssi = dev.rssi().await.unwrap_or_default();
         let service_count = if let Ok(Ok(srv_ct)) =
             timeout(Duration::from_secs(max_op_secs), dev.service_count()).await
@@ -49,12 +45,14 @@ async fn main() {
                 srvs.insert(key, value);
             }
         }
-        if !characteristics.is_empty()
-            || (!srvs.is_empty()
-            && srvs.iter().any(|(_, cs)| !cs.is_empty()))
+        if name.is_some()
+            || !characteristics.is_empty()
+            || !srvs.is_empty()
         {
             println!("found device {}", dev.address());
-            println!("  name: {name}");
+            if let Some(name) = name {
+                println!("  name: {name}");
+            }
             println!("  rssi: {rssi}");
             println!("  char_ct: {}", characteristics.len());
             if !characteristics.is_empty() {
