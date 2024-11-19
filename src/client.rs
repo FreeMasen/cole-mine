@@ -56,72 +56,75 @@ impl Client {
     pub async fn connect(&mut self) -> Result {
         let charas = self.find_uart_rx_characteristic().await?;
         let mut incoming_stream = charas.subscribe().await?;
-        self.rx = Some(ClientReceiver(async_stream::stream! {
-            let mut partial_states = MultiPacketStates::default();
-            while let Some(ev) = incoming_stream.next().await {
-                let Some(tag) = ev.get(0) else {
-                    continue;
-                };
-                let mut packet = [0u8; 16];
-                packet.copy_from_slice(&ev);
-                let cmd = match *tag {
-                    3 => CommandReply::BatteryInfo {
-                        level: ev[1],
-                        charging: ev[2] > 0,
-                    },
-                    30 => {
-                        if let Some(mut s) = partial_states.heart_rate_state.take() {
-                            if s.step(packet).is_err() {
-                                continue;
-                            }
-                            let HeartRateState::Complete { date, range, rates} = s else {
-                                partial_states.heart_rate_state = Some(s);
-                                continue;
-                            };
-                            CommandReply::HeartRate(HeartRate { range, rates, date })
-                        } else {
-                            partial_states.sport_detail = SportDetailState::new(packet).ok();
-                            continue;
-                        }
-                    },
-                    67 => {
-                        if let Some(mut ss) = partial_states.sport_detail.take() {
-                            if ss.step(packet).is_err() {
-                                continue;
-                            }
-                            let SportDetailState::Complete { packets } = ss else {
-                                partial_states.sport_detail = Some(ss);
-                                continue;
-                            };
-                            CommandReply::Steps(packets)
-                        } else {
-                            partial_states.sport_detail = SportDetailState::new(packet).ok();
-                            continue;
-                        }
-                    }
-                    105 => {
-                        let ev = if packet[2] != 0 {
-                            RealTimeEvent::Error(packet[2])
-                        } else {
-                            if packet[1] == 1 {
-                                RealTimeEvent::HeartRate(packet[3])
+        self.rx = Some(ClientReceiver(
+            async_stream::stream! {
+                let mut partial_states = MultiPacketStates::default();
+                while let Some(ev) = incoming_stream.next().await {
+                    let Some(tag) = ev.get(0) else {
+                        continue;
+                    };
+                    let mut packet = [0u8; 16];
+                    packet.copy_from_slice(&ev);
+                    let cmd = match *tag {
+                        3 => CommandReply::BatteryInfo {
+                            level: ev[1],
+                            charging: ev[2] > 0,
+                        },
+                        30 => {
+                            if let Some(mut s) = partial_states.heart_rate_state.take() {
+                                if s.step(packet).is_err() {
+                                    continue;
+                                }
+                                let HeartRateState::Complete { date, range, rates} = s else {
+                                    partial_states.heart_rate_state = Some(s);
+                                    continue;
+                                };
+                                CommandReply::HeartRate(HeartRate { range, rates, date })
                             } else {
-                                RealTimeEvent::Oxygen(packet[3])
+                                partial_states.sport_detail = SportDetailState::new(packet).ok();
+                                continue;
                             }
-                        };
-                        CommandReply::RealTimeData(ev)
-                    }
-                    _ => CommandReply::Unknown(ev),
-                };
-                yield cmd;
+                        },
+                        67 => {
+                            if let Some(mut ss) = partial_states.sport_detail.take() {
+                                if ss.step(packet).is_err() {
+                                    continue;
+                                }
+                                let SportDetailState::Complete { packets } = ss else {
+                                    partial_states.sport_detail = Some(ss);
+                                    continue;
+                                };
+                                CommandReply::Steps(packets)
+                            } else {
+                                partial_states.sport_detail = SportDetailState::new(packet).ok();
+                                continue;
+                            }
+                        }
+                        105 => {
+                            let ev = if packet[2] != 0 {
+                                RealTimeEvent::Error(packet[2])
+                            } else {
+                                if packet[1] == 1 {
+                                    RealTimeEvent::HeartRate(packet[3])
+                                } else {
+                                    RealTimeEvent::Oxygen(packet[3])
+                                }
+                            };
+                            CommandReply::RealTimeData(ev)
+                        }
+                        _ => CommandReply::Unknown(ev),
+                    };
+                    yield cmd;
+                }
+
             }
-            
-        }.boxed_local()));
+            .boxed_local(),
+        ));
         Ok(())
     }
 
     pub async fn send(&mut self, command: Command) -> Result {
-        let cmd_bytes: [u8;16] = command.into();
+        let cmd_bytes: [u8; 16] = command.into();
         Ok(self.tx.write_command(&cmd_bytes).await?)
     }
 
@@ -166,9 +169,10 @@ impl Client {
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
         let services = self.device.services().await?;
-        let service = services.into_iter().find(|s| s.uuid() == crate::DEVICE_INFO_UUID).ok_or_else(|| {
-            format!("Unable to find service with device info uuid")
-        })?;
+        let service = services
+            .into_iter()
+            .find(|s| s.uuid() == crate::DEVICE_INFO_UUID)
+            .ok_or_else(|| format!("Unable to find service with device info uuid"))?;
         let mut ret = DeviceDetails::default();
         for ch in service.characteristics() {
             if ch.uuid() == crate::DEVICE_HW_UUID {
@@ -185,7 +189,7 @@ impl Client {
                 break;
             }
         }
-        
+
         Ok(ret)
     }
 }
