@@ -1,6 +1,6 @@
 use bleasy::{Device, ScanConfig};
-use futures::StreamExt;
-use std::time::Duration;
+use futures::{Stream, StreamExt};
+use std::{pin::Pin, time::Duration};
 use uuid::Uuid;
 
 type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
@@ -37,29 +37,24 @@ pub(crate) const DEVICE_NAME_PREFIXES: &[&'static str] = &[
     "KSIX RING",
 ];
 
-pub async fn discover(all: bool) -> Result<Vec<Device>> {
+pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
     let mut scanner = bleasy::Scanner::new();
-    scanner
-        .start(ScanConfig::default().stop_after_timeout(Duration::from_secs(5)))
-        .await?;
-
-    let devs: Vec<_> = scanner.device_stream().collect().await;
-    if all {
-        return Ok(devs);
-    }
-    let mut ret = Vec::new();
-    for dev in devs {
-        let Some(name) = dev.local_name().await else {
-            continue;
-        };
-        if DEVICE_NAME_PREFIXES
-            .iter()
-            .any(|pre| name.trim().starts_with(*pre))
-        {
-            ret.push(dev);
+    scanner.start(ScanConfig::default()).await?;
+    Ok(async_stream::stream! {
+        let mut stream = scanner.device_stream();
+        while let Some(dev) = stream.next().await {
+            if all {
+                yield dev;
+            } else if let Some(name) = dev.local_name().await {
+                if DEVICE_NAME_PREFIXES
+                .iter()
+                .any(|pre| name.trim().starts_with(*pre)) {
+                    yield dev;
+                }
+            }
         }
     }
-    Ok(ret)
+    .boxed_local())
 }
 
 pub async fn find_device(addr: impl Into<bleasy::BDAddr>, data: &[u8]) -> Result {

@@ -1,8 +1,10 @@
 use cole_mine::discover;
+use futures::StreamExt;
 
 #[tokio::main]
 async fn main() {
-    for dev in discover(true).await.unwrap() {
+    let mut stream = discover(true).await.unwrap();
+    while let Some(dev) = stream.next().await {
         println!(
             "{}: {}",
             dev.local_name().await.unwrap_or_else(|| "???".to_string()),
