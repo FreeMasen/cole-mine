@@ -1,5 +1,7 @@
-use bleasy::{Characteristic, Device, ScanConfig};
-use futures::{channel::mpsc, SinkExt, StreamExt};
+use std::pin::Pin;
+
+use bleasy::{Characteristic, Device, ScanConfig, Service};
+use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 
 use crate::{
     heart_rate::{HeartRate, HeartRateState},
@@ -9,8 +11,11 @@ use crate::{
 
 pub struct Client {
     device: Device,
-    rx: mpsc::UnboundedReceiver<CommandReply>,
+    rx: Option<ClientReceiver>,
+    tx: Characteristic,
 }
+
+pub struct ClientReceiver(Pin<Box<dyn Stream<Item = CommandReply>>>);
 
 #[derive(Default)]
 pub struct DeviceDetails {
@@ -25,7 +30,7 @@ pub struct MultiPacketStates {
 }
 
 impl Client {
-    pub async fn connect(addr: impl Into<bleasy::BDAddr>) -> Result<Self> {
+    pub async fn new(addr: impl Into<bleasy::BDAddr>) -> Result<Self> {
         let addr = addr.into();
         let mut s = bleasy::Scanner::new();
         s.start(
@@ -40,12 +45,19 @@ impl Client {
             .next()
             .await
             .ok_or_else(|| format!("No device found"))?;
-        let (mut tx, rx) = mpsc::unbounded();
-        let ret = Self { device, rx };
-        let charas = ret.find_uart_characteristic().await?;
+        let tx = Self::find_uart_tx_characteristic(&device).await?;
+        Ok(Self {
+            device,
+            tx,
+            rx: None,
+        })
+    }
+
+    pub async fn connect(&mut self) -> Result {
+        let charas = self.find_uart_rx_characteristic().await?;
         let mut incoming_stream = charas.subscribe().await?;
-        tokio::task::spawn(async move {
-            let mut partial_states = MultiPacketStates::default();;
+        self.rx = Some(ClientReceiver(async_stream::stream! {
+            let mut partial_states = MultiPacketStates::default();
             while let Some(ev) = incoming_stream.next().await {
                 let Some(tag) = ev.get(0) else {
                     continue;
@@ -101,26 +113,55 @@ impl Client {
                     }
                     _ => CommandReply::Unknown(ev),
                 };
-                tx.send(cmd).await.ok();
+                yield cmd;
             }
-        });
-        Ok(ret)
+            
+        }.boxed_local()));
+        Ok(())
     }
 
-    async fn find_uart_characteristic(&self) -> Result<Characteristic> {
-        let service = self
-            .device
-            .services()
-            .await?
-            .into_iter()
-            .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
-            .ok_or_else(|| format!("Unable to find UART service"))?;
+    pub async fn send(&mut self, command: Command) -> Result {
+        let cmd_bytes: [u8;16] = command.into();
+        Ok(self.tx.write_command(&cmd_bytes).await?)
+    }
+
+    pub async fn read_next(&mut self) -> Result<Option<CommandReply>> {
+        if self.rx.is_none() {
+            self.connect().await?;
+        }
+        let Some(rx) = &mut self.rx else {
+            return Err(format!("fatal error, rx was none after `connect`").into());
+        };
+        Ok(rx.0.next().await)
+    }
+
+    async fn find_uart_rx_characteristic(&self) -> Result<Characteristic> {
+        let service = Self::find_uart_service(&self.device).await?;
         let char = service
             .characteristics()
             .into_iter()
             .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
             .ok_or_else(|| format!("Unable to find RX characteristic"))?;
         Ok(char)
+    }
+
+    async fn find_uart_tx_characteristic(device: &Device) -> Result<Characteristic> {
+        let service = Self::find_uart_service(device).await?;
+        let char = service
+            .characteristics()
+            .into_iter()
+            .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
+            .ok_or_else(|| format!("Unable to find TX characteristic"))?;
+        Ok(char)
+    }
+
+    async fn find_uart_service(device: &Device) -> Result<Service> {
+        Ok(device
+            .services()
+            .await?
+            .into_iter()
+            .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
+            .ok_or_else(|| format!("Unable to find UART service"))?)
     }
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
