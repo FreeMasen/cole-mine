@@ -323,8 +323,6 @@ fn checksum(packet: &[u8]) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use time::OffsetDateTime;
-
     use super::*;
 
     #[test]
@@ -408,10 +406,10 @@ mod tests {
     //         futures::stream::iter([make_packet(&[30]), make_packet(&[30]), make_packet(&[30])]);
     // }
 
-    fn make_packet(bytes: &[u8]) -> Vec<u8> {
-        let mut ret = bytes.to_vec();
-        ret.resize(16, 0);
-        ret[15] = checksum(&ret);
-        ret
-    }
+    // fn make_packet(bytes: &[u8]) -> Vec<u8> {
+    //     let mut ret = bytes.to_vec();
+    //     ret.resize(16, 0);
+    //     ret[15] = checksum(&ret);
+    //     ret
+    // }
 }
