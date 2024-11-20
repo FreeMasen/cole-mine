@@ -64,6 +64,8 @@ pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> 
                 } else {
                     log::debug!("Skipping device for name mismatch `{name}`");
                 }
+            } else {
+                log::debug!("Skipping device with no local name {}", dev.address());
             }
         }
     }
