@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use bleasy::{Characteristic, Device, ScanConfig, Service};
-use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 
 use crate::{
     heart_rate::{HeartRate, HeartRateState},
@@ -17,50 +17,35 @@ pub struct Client {
 
 pub struct ClientReceiver(Pin<Box<dyn Stream<Item = CommandReply>>>);
 
-#[derive(Default)]
-pub struct DeviceDetails {
-    hw: Option<String>,
-    fw: Option<String>,
+impl futures::Stream for ClientReceiver {
+    type Item = CommandReply;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.0.poll_next_unpin(cx)
+    }
 }
 
-#[derive(Default)]
-pub struct MultiPacketStates {
-    sport_detail: Option<SportDetailState>,
-    heart_rate_state: Option<HeartRateState>,
-}
-
-impl Client {
-    pub async fn new(addr: impl Into<bleasy::BDAddr>) -> Result<Self> {
-        let addr = addr.into();
-        let mut s = bleasy::Scanner::new();
-        s.start(
-            ScanConfig::default()
-                .filter_by_address(move |w| w == addr)
-                .stop_after_first_match()
-                .stop_after_timeout(std::time::Duration::from_secs(5)),
-        )
-        .await?;
-        let device = s
-            .device_stream()
-            .next()
-            .await
-            .ok_or_else(|| format!("No device found"))?;
-        let tx = Self::find_uart_tx_characteristic(&device).await?;
-        Ok(Self {
-            device,
-            tx,
-            rx: None,
-        })
+impl ClientReceiver {
+    pub async fn connect_device(device: &Device) -> Result<Self> {
+        let service = Client::find_uart_service(device).await?;
+        let char = service
+            .characteristics()
+            .into_iter()
+            .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
+            .ok_or_else(|| "Unable to find RX characteristic".to_string())?;
+        let incoming_stream = char.subscribe().await?;
+        Ok(Self::from_stream(incoming_stream))
     }
 
-    pub async fn connect(&mut self) -> Result {
-        let charas = self.find_uart_rx_characteristic().await?;
-        let mut incoming_stream = charas.subscribe().await?;
-        self.rx = Some(ClientReceiver(
+    pub fn from_stream(mut stream: Pin<Box<dyn Stream<Item = Vec<u8>>>>) -> Self {
+        ClientReceiver(
             async_stream::stream! {
                 let mut partial_states = MultiPacketStates::default();
-                while let Some(ev) = incoming_stream.next().await {
-                    let Some(tag) = ev.get(0) else {
+                while let Some(ev) = stream.next().await {
+                    let Some(tag) = ev.first() else {
                         continue;
                     };
                     let mut packet = [0u8; 16];
@@ -103,12 +88,10 @@ impl Client {
                         105 => {
                             let ev = if packet[2] != 0 {
                                 RealTimeEvent::Error(packet[2])
+                            } else if packet[1] == 1 {
+                                RealTimeEvent::HeartRate(packet[3])
                             } else {
-                                if packet[1] == 1 {
-                                    RealTimeEvent::HeartRate(packet[3])
-                                } else {
-                                    RealTimeEvent::Oxygen(packet[3])
-                                }
+                                RealTimeEvent::Oxygen(packet[3])
                             };
                             CommandReply::RealTimeData(ev)
                         }
@@ -119,7 +102,48 @@ impl Client {
 
             }
             .boxed_local(),
-        ));
+        )
+    }
+}
+
+#[derive(Default)]
+pub struct DeviceDetails {
+    hw: Option<String>,
+    fw: Option<String>,
+}
+
+#[derive(Default)]
+pub struct MultiPacketStates {
+    sport_detail: Option<SportDetailState>,
+    heart_rate_state: Option<HeartRateState>,
+}
+
+impl Client {
+    pub async fn new(addr: impl Into<bleasy::BDAddr>) -> Result<Self> {
+        let addr = addr.into();
+        let mut s = bleasy::Scanner::new();
+        s.start(
+            ScanConfig::default()
+                .filter_by_address(move |w| w == addr)
+                .stop_after_first_match()
+                .stop_after_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await?;
+        let device = s
+            .device_stream()
+            .next()
+            .await
+            .ok_or_else(|| "No device found".to_string())?;
+        let tx = Self::find_uart_tx_characteristic(&device).await?;
+        Ok(Self {
+            device,
+            tx,
+            rx: None,
+        })
+    }
+
+    pub async fn connect(&mut self) -> Result {
+        self.rx = Some(ClientReceiver::connect_device(&self.device).await?);
         Ok(())
     }
 
@@ -133,19 +157,11 @@ impl Client {
             self.connect().await?;
         }
         let Some(rx) = &mut self.rx else {
-            return Err(format!("fatal error, rx was none after `connect`").into());
+            return Err("fatal error, rx was none after `connect`"
+                .to_string()
+                .into());
         };
         Ok(rx.0.next().await)
-    }
-
-    async fn find_uart_rx_characteristic(&self) -> Result<Characteristic> {
-        let service = Self::find_uart_service(&self.device).await?;
-        let char = service
-            .characteristics()
-            .into_iter()
-            .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
-            .ok_or_else(|| format!("Unable to find RX characteristic"))?;
-        Ok(char)
     }
 
     async fn find_uart_tx_characteristic(device: &Device) -> Result<Characteristic> {
@@ -154,7 +170,7 @@ impl Client {
             .characteristics()
             .into_iter()
             .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
-            .ok_or_else(|| format!("Unable to find TX characteristic"))?;
+            .ok_or_else(|| "Unable to find TX characteristic".to_string())?;
         Ok(char)
     }
 
@@ -164,7 +180,7 @@ impl Client {
             .await?
             .into_iter()
             .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
-            .ok_or_else(|| format!("Unable to find UART service"))?)
+            .ok_or_else(|| "Unable to find UART service".to_string())?)
     }
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
@@ -172,7 +188,7 @@ impl Client {
         let service = services
             .into_iter()
             .find(|s| s.uuid() == crate::DEVICE_INFO_UUID)
-            .ok_or_else(|| format!("Unable to find service with device info uuid"))?;
+            .ok_or_else(|| "Unable to find service with device info uuid".to_string())?;
         let mut ret = DeviceDetails::default();
         for ch in service.characteristics() {
             if ch.uuid() == crate::DEVICE_HW_UUID {
@@ -220,48 +236,48 @@ pub enum Command {
     BatteryInfo,
 }
 
-impl Into<[u8; 16]> for Command {
-    fn into(self) -> [u8; 16] {
+impl From<Command> for [u8; 16] {
+    fn from(cmd: Command) -> [u8; 16] {
         let mut ret = [0u8; 16];
-        match self {
-            Self::ReadSteps { day_offset } => {
-                ret.copy_from_slice(&[67, day_offset, 0x0f, 0x00, 0x5f, 0x01]);
+        match cmd {
+            Command::ReadSteps { day_offset } => {
+                ret[0..6].copy_from_slice(&[67, day_offset, 0x0f, 0x00, 0x5f, 0x01]);
             }
-            Self::ReadHeartRate { timestamp } => {
+            Command::ReadHeartRate { timestamp } => {
                 ret[0] = 21;
-                (&mut ret[1..]).copy_from_slice(&timestamp.to_le_bytes());
+                ret[1..5].copy_from_slice(&timestamp.to_le_bytes());
             }
-            Self::GetHeartRateSettings => {
-                ret.copy_from_slice(&[22, 1]);
+            Command::GetHeartRateSettings => {
+                ret[0..2].copy_from_slice(&[22, 1]);
             }
-            Self::SetHeartRateSettings { enabled, interval } => {
+            Command::SetHeartRateSettings { enabled, interval } => {
                 ret[0] = 22;
                 ret[1] = 2;
-                ret[2] = enabled.then_some(1).unwrap_or(2);
+                ret[2] = if enabled { 1 } else { 2 };
                 ret[3] = interval;
             }
-            Self::StartRealTimeHeartRate => {
-                ret.copy_from_slice(&[105, 1]);
+            Command::StartRealTimeHeartRate => {
+                ret[0..2].copy_from_slice(&[105, 1]);
             }
-            Self::ContinueRealTimeHeartRate => {
-                ret.copy_from_slice(&[30, 3]);
+            Command::ContinueRealTimeHeartRate => {
+                ret[0..2].copy_from_slice(&[30, 3]);
             }
-            Self::StopRealTimeHeartRate => {
-                ret.copy_from_slice(&[106, 1]);
+            Command::StopRealTimeHeartRate => {
+                ret[0..2].copy_from_slice(&[106, 1]);
             }
-            Self::StartSpo2 => {
-                ret.copy_from_slice(&[105, 0x03, 0x25]);
+            Command::StartSpo2 => {
+                ret[0..3].copy_from_slice(&[105, 0x03, 0x25]);
             }
-            Self::StopSpo2 => {
-                ret.copy_from_slice(&[106, 0x03]);
+            Command::StopSpo2 => {
+                ret[0..2].copy_from_slice(&[106, 0x03]);
             }
-            Self::Reboot => {
-                ret.copy_from_slice(&[8, 1]);
+            Command::Reboot => {
+                ret[0..2].copy_from_slice(&[8, 1]);
             }
-            Self::SetTime { when, language } => {
-                ret.copy_from_slice(&[
+            Command::SetTime { when, language } => {
+                ret[0..7].copy_from_slice(&[
                     // 2 digit year...
-                    ((when.year().abs() as u32) % 2000) as u8,
+                    (when.year().unsigned_abs() % 2000) as u8,
                     when.month().into(),
                     when.day(),
                     when.hour(),
@@ -270,10 +286,10 @@ impl Into<[u8; 16]> for Command {
                     language,
                 ]);
             }
-            Self::BlinkTwice => {
+            Command::BlinkTwice => {
                 ret[0] = 16;
             }
-            Self::BatteryInfo => {
+            Command::BatteryInfo => {
                 ret[0] = 3;
             }
         }
@@ -282,6 +298,7 @@ impl Into<[u8; 16]> for Command {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum CommandReply {
     BatteryInfo { level: u8, charging: bool },
     HeartRateSettings { enabled: bool, interval: u8 },
@@ -291,6 +308,7 @@ pub enum CommandReply {
     Unknown(Vec<u8>),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum RealTimeEvent {
     HeartRate(u8),
     Oxygen(u8),
@@ -301,4 +319,99 @@ fn checksum(packet: &[u8]) -> u8 {
     let sum: u32 = packet.iter().copied().map(|v| v as u32).sum();
     let trunc = sum & 255;
     trunc as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use time::OffsetDateTime;
+
+    use super::*;
+
+    #[test]
+    fn commands_serialize() {
+        use Command::*;
+        let commands: Vec<[u8; 16]> = [
+            ReadSteps { day_offset: 0 },
+            ReadHeartRate { timestamp: 0 },
+            GetHeartRateSettings,
+            SetHeartRateSettings {
+                enabled: false,
+                interval: 0,
+            },
+            StartRealTimeHeartRate,
+            ContinueRealTimeHeartRate,
+            StopRealTimeHeartRate,
+            StartSpo2,
+            StopSpo2,
+            Reboot,
+            SetTime {
+                when: time::OffsetDateTime::from_unix_timestamp(0).unwrap(),
+                language: 0,
+            },
+            BlinkTwice,
+            BatteryInfo,
+        ]
+        .into_iter()
+        .map(|cmd| {
+            let bytes: [u8; 16] = cmd.into();
+            bytes
+        })
+        .collect();
+        insta::assert_debug_snapshot!(commands);
+    }
+
+    #[tokio::test]
+    async fn parse_reply_battery_not_charging() {
+        let expected = CommandReply::BatteryInfo {
+            charging: false,
+            level: 1,
+        };
+
+        let mut packet = [0u8; 16];
+        packet[0] = 3;
+        packet[1] = 1;
+        let mut rx =
+            ClientReceiver::from_stream(Box::pin(futures::stream::once(
+                async move { packet.to_vec() },
+            )));
+        let parsed = rx.next().await.unwrap();
+        assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn parse_reply_battery_charging() {
+        let expected = CommandReply::BatteryInfo {
+            charging: true,
+            level: 2,
+        };
+
+        let mut packet = [0u8; 16];
+        packet[0] = 3;
+        packet[1] = 2;
+        packet[2] = 1;
+        let mut rx =
+            ClientReceiver::from_stream(Box::pin(futures::stream::once(
+                async move { packet.to_vec() },
+            )));
+        let parsed = rx.next().await.unwrap();
+        assert_eq!(parsed, expected);
+    }
+
+    // #[tokio::test]
+    // async fn parse_reply() {
+    //     let expected = CommandReply::HeartRate(HeartRate {
+    //         range: 1,
+    //         rates: vec![],
+    //         date: OffsetDateTime::from_unix_timestamp(88888888).unwrap(),
+    //     });
+    //     let stream =
+    //         futures::stream::iter([make_packet(&[30]), make_packet(&[30]), make_packet(&[30])]);
+    // }
+
+    fn make_packet(bytes: &[u8]) -> Vec<u8> {
+        let mut ret = bytes.to_vec();
+        ret.resize(16, 0);
+        ret[15] = checksum(&ret);
+        ret
+    }
 }

@@ -45,10 +45,7 @@ async fn main() {
                 srvs.insert(key, value);
             }
         }
-        if name.is_some()
-            || !characteristics.is_empty()
-            || !srvs.is_empty()
-        {
+        if name.is_some() || !characteristics.is_empty() || !srvs.is_empty() {
             println!("found device {}", dev.address());
             if let Some(name) = name {
                 println!("  name: {name}");

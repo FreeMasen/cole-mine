@@ -1,12 +1,14 @@
 use crate::Result;
 use time::OffsetDateTime;
 
+#[derive(Debug, PartialEq)]
 pub struct HeartRate {
     pub range: u8,
     pub rates: Vec<u8>,
     pub date: OffsetDateTime,
 }
 
+#[derive(Debug)]
 pub enum HeartRateState {
     Length {
         size: u8,
@@ -49,7 +51,7 @@ impl TryFrom<&[u8]> for HeartRateState {
             .into());
         }
         Ok(Self::Length {
-            size: value[1],
+            size: value[1].saturating_sub(1),
             range: value[2],
         })
     }
@@ -69,7 +71,7 @@ impl HeartRateState {
                 Self::step_receiving(*size, *range, *date, rates, packet)?
             }
             HeartRateState::Complete { .. } => {
-                return Err(format!("Unexpected packet after complete!").into())
+                return Err("Unexpected packet after complete!".to_string().into())
             }
         };
         Ok(())
@@ -92,7 +94,7 @@ impl HeartRateState {
             rates.push(byte);
         }
         Ok(Self::Recieving {
-            range: range,
+            range,
             date: timestamp,
             rates,
             size,
@@ -107,10 +109,14 @@ impl HeartRateState {
         packet: [u8; 16],
     ) -> Result<Self> {
         if packet[1] == 0 {
-            return Err(format!("Unexpected size packet after date packet").into());
+            return Err("Unexpected size packet after date packet"
+                .to_string()
+                .into());
         }
         if packet[1] == 1 {
-            return Err(format!("Unexpected date packet after date packet").into());
+            return Err("Unexpected date packet after date packet"
+                .to_string()
+                .into());
         }
         for &byte in &packet[2..15] {
             rates.push(byte);
@@ -125,5 +131,64 @@ impl HeartRateState {
                 rates,
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use time::{Date, Time};
+
+    use super::*;
+
+    #[test]
+    fn parse_multi_packet() {
+        let mut packets = VecDeque::from_iter(
+            [
+                *b"\x15\x00\x18\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x002",
+                *b"\x15\x01\x80\xad\xb6f\x00\x00\x00\x00\x00\x00\x00\x00\x00_",
+                *b"\x15\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x17",
+                *b"\x15\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x18",
+                *b"\x15\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x19",
+                *b"\x15\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1a",
+                *b"\x15\x06\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1b",
+                *b"\x15\x07\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1c",
+                *b"\x15\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1d",
+                *b"\x15\t\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1e",
+                *b"\x15\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x1f",
+                *b"\x15\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 ",
+                *b"\x15\x0c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00!",
+                *b"\x15\r\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\"",
+                *b"\x15\x0e\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00#",
+                *b"\x15\x0f\x00\x00Y\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00}",
+                *b"\x15\x10\x00k\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x90",
+                *b"\x15\x11`\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00k\xf1",
+                *b"\x15\x12\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'",
+                *b"\x15\x13\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00P\x00\x00x",
+                *b"\x15\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00F\x00\x00\x00o",
+                *b"\x15\x15\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00*",
+                *b"\x15\x16\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00+",
+                *b"\x15\x17\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00,",
+            ]
+            .into_iter(),
+        );
+        let mut state =
+            HeartRateState::try_from(&packets.pop_front().unwrap().as_slice()[1..]).unwrap();
+        for packet in packets {
+            state.step(packet).unwrap();
+        }
+        let HeartRateState::Complete { range, rates, date } = state else {
+            panic!("invalid state: {state:?}");
+        };
+        assert_eq!(range, 5);
+        assert_eq!(
+            date,
+            OffsetDateTime::new_utc(
+                Date::from_calendar_date(2024, time::Month::August, 10).unwrap(),
+                Time::from_hms(0, 0, 0).unwrap()
+            )
+        );
+        insta::assert_debug_snapshot!(rates);
     }
 }
