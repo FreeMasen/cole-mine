@@ -23,6 +23,9 @@ async fn main() {
         .ok()
         .and_then(|a| a.parse::<u64>().ok())
         .unwrap_or(5);
+    let force_all = std::env::var("COLE_MINE_SCAN_MORE_FORCE_ALL")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     let mut stream = discover(true).await.unwrap();
     while let Some(dev) = stream.next().await {
         log::trace!("looking up local name");
@@ -88,7 +91,8 @@ async fn main() {
             }
         }
         log::debug!("{name:?} {}", dev.address());
-        if name.is_some()
+        if force_all
+            || name.is_some()
             || !characteristics.is_empty()
             || !srvs.is_empty()
             || manu.is_some()
