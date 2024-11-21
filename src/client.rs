@@ -51,11 +51,16 @@ impl ClientReceiver {
                     let mut packet = [0u8; 16];
                     packet.copy_from_slice(&ev);
                     let cmd = match *tag {
+                        1 => CommandReply::SetTime,
                         3 => CommandReply::BatteryInfo {
                             level: ev[1],
                             charging: ev[2] > 0,
                         },
-                        30 => {
+                        8 => CommandReply::Reboot,
+                        16 => {
+                            CommandReply::BlinkTwice
+                        },
+                        21 => {
                             if let Some(mut s) = partial_states.heart_rate_state.take() {
                                 if s.step(packet).is_err() {
                                     continue;
@@ -69,6 +74,9 @@ impl ClientReceiver {
                                 partial_states.sport_detail = SportDetailState::new(packet).ok();
                                 continue;
                             }
+                        },
+                        22 if packet[2] == 1 || packet[2] == 2 => {
+                            CommandReply::HeartRateSettings { enabled: packet[2] == 1, interval: packet[3] }
                         },
                         67 => {
                             if let Some(mut ss) = partial_states.sport_detail.take() {
@@ -84,7 +92,7 @@ impl ClientReceiver {
                                 partial_states.sport_detail = SportDetailState::new(packet).ok();
                                 continue;
                             }
-                        }
+                        },
                         105 => {
                             let ev = if packet[2] != 0 {
                                 RealTimeEvent::Error(packet[2])
@@ -95,6 +103,7 @@ impl ClientReceiver {
                             };
                             CommandReply::RealTimeData(ev)
                         }
+                        106 => CommandReply::StopRealTime,
                         _ => CommandReply::Unknown(ev),
                     };
                     yield cmd;
@@ -275,7 +284,8 @@ impl From<Command> for [u8; 16] {
                 ret[0..2].copy_from_slice(&[8, 1]);
             }
             Command::SetTime { when, language } => {
-                ret[0..7].copy_from_slice(&[
+                ret[0..8].copy_from_slice(&[
+                    1,
                     // 2 digit year...
                     (when.year().unsigned_abs() % 2000) as u8,
                     when.month().into(),
@@ -305,6 +315,10 @@ pub enum CommandReply {
     Steps(Vec<SportDetail>),
     HeartRate(HeartRate),
     RealTimeData(RealTimeEvent),
+    BlinkTwice,
+    SetTime,
+    Reboot,
+    StopRealTime,
     Unknown(Vec<u8>),
 }
 
@@ -323,6 +337,7 @@ fn checksum(packet: &[u8]) -> u8 {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
@@ -395,21 +410,34 @@ mod tests {
         assert_eq!(parsed, expected);
     }
 
-    // #[tokio::test]
-    // async fn parse_reply() {
-    //     let expected = CommandReply::HeartRate(HeartRate {
-    //         range: 1,
-    //         rates: vec![],
-    //         date: OffsetDateTime::from_unix_timestamp(88888888).unwrap(),
-    //     });
-    //     let stream =
-    //         futures::stream::iter([make_packet(&[30]), make_packet(&[30]), make_packet(&[30])]);
-    // }
+    #[tokio::test]
+    async fn parse_reply_hear_rate_settings_disabled() {
+        let expected = CommandReply::HeartRateSettings {
+            enabled: false,
+            interval: 0,
+        };
+        let stream = futures::stream::iter([make_packet(&[22, 0, 2])]);
+        let mut rx = ClientReceiver::from_stream(Box::pin(stream));
+        let parsed = rx.next().await.unwrap();
+        assert_eq!(parsed, expected);
+    }
 
-    // fn make_packet(bytes: &[u8]) -> Vec<u8> {
-    //     let mut ret = bytes.to_vec();
-    //     ret.resize(16, 0);
-    //     ret[15] = checksum(&ret);
-    //     ret
-    // }
+    #[tokio::test]
+    async fn parse_reply_hear_rate_settings_enabled() {
+        let expected = CommandReply::HeartRateSettings {
+            enabled: true,
+            interval: 127,
+        };
+        let stream = futures::stream::iter([make_packet(&[22, 0, 1, 127])]);
+        let mut rx = ClientReceiver::from_stream(Box::pin(stream));
+        let parsed = rx.next().await.unwrap();
+        assert_eq!(parsed, expected);
+    }
+
+    fn make_packet(bytes: &[u8]) -> Vec<u8> {
+        let mut ret = bytes.to_vec();
+        ret.resize(16, 0);
+        ret[15] = checksum(&ret);
+        ret
+    }
 }
