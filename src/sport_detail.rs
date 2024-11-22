@@ -1,8 +1,7 @@
 use crate::Result;
 use typed_builder::TypedBuilder;
 
-#[derive(Default, TypedBuilder, PartialEq, Debug)]
-#[builder(field_defaults(default))]
+#[derive(Default, TypedBuilder, PartialEq, Debug, serde::Deserialize, serde::Serialize)]
 pub struct SportDetail {
     pub year: u16,
     pub month: u8,

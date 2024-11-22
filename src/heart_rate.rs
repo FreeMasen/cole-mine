@@ -1,7 +1,7 @@
 use crate::Result;
 use time::OffsetDateTime;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct HeartRate {
     pub range: u8,
     pub rates: Vec<u8>,

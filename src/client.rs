@@ -87,7 +87,7 @@ impl ClientReceiver {
                                     partial_states.sport_detail = Some(ss);
                                     continue;
                                 };
-                                CommandReply::Steps(packets)
+                                CommandReply::SportDetail(packets)
                             } else {
                                 partial_states.sport_detail = SportDetailState::new(packet).ok();
                                 continue;
@@ -115,10 +115,10 @@ impl ClientReceiver {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, serde::Deserialize, serde::Serialize)]
 pub struct DeviceDetails {
-    hw: Option<String>,
-    fw: Option<String>,
+    pub hw: Option<String>,
+    pub fw: Option<String>,
 }
 
 #[derive(Default)]
@@ -219,8 +219,10 @@ impl Client {
     }
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "command", content = "data", rename_all = "camelCase")]
 pub enum Command {
-    ReadSteps {
+    ReadSportDetail {
         day_offset: u8,
     },
     ReadHeartRate {
@@ -249,7 +251,7 @@ impl From<Command> for [u8; 16] {
     fn from(cmd: Command) -> [u8; 16] {
         let mut ret = [0u8; 16];
         match cmd {
-            Command::ReadSteps { day_offset } => {
+            Command::ReadSportDetail { day_offset } => {
                 ret[0..6].copy_from_slice(&[67, day_offset, 0x0f, 0x00, 0x5f, 0x01]);
             }
             Command::ReadHeartRate { timestamp } => {
@@ -308,11 +310,12 @@ impl From<Command> for [u8; 16] {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "command", content = "data", rename_all = "camelCase")]
 pub enum CommandReply {
     BatteryInfo { level: u8, charging: bool },
     HeartRateSettings { enabled: bool, interval: u8 },
-    Steps(Vec<SportDetail>),
+    SportDetail(Vec<SportDetail>),
     HeartRate(HeartRate),
     RealTimeData(RealTimeEvent),
     BlinkTwice,
@@ -322,7 +325,8 @@ pub enum CommandReply {
     Unknown(Vec<u8>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "event", content = "value", rename_all = "camelCase")]
 pub enum RealTimeEvent {
     HeartRate(u8),
     Oxygen(u8),
@@ -344,7 +348,7 @@ mod tests {
     fn commands_serialize() {
         use Command::*;
         let commands: Vec<[u8; 16]> = [
-            ReadSteps { day_offset: 0 },
+            ReadSportDetail { day_offset: 0 },
             ReadHeartRate { timestamp: 0 },
             GetHeartRateSettings,
             SetHeartRateSettings {
