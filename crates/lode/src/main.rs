@@ -369,6 +369,7 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
             );
             for rate in hr.rates {
                 println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
+                time += Duration::from_secs(60 * 5);
             }
         } else {
             eprintln!("Unexpected report from heart rate: {event:?}");
