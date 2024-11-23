@@ -637,7 +637,7 @@ async fn listen(addr: BDAddr) -> Result {
 async fn listen_(client: &mut Client) -> Result {
     client.connect().await?;
     while let Ok(Ok(Some(event))) =
-        tokio::time::timeout(Duration::from_secs(5), client.read_next()).await
+        tokio::time::timeout(Duration::from_secs(60), client.read_next()).await
     {
         println!("[{}]: {event:?}", time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap());
     }
