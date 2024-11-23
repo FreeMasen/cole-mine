@@ -539,7 +539,7 @@ async fn write_hr_config_(
     if set_enabled {
         enabled = true;
     }
-    if !set_disabled {
+    if set_disabled {
         enabled = false;
     }
     if let Some(set_interval) = set_interval {
