@@ -181,7 +181,7 @@ async fn send_command(cmd: SendCommand) -> Result {
             #[cfg(target_os = "macos")]
             name,
             #[cfg(not(target_os = "macos"))]
-            address,
+            addr,
         } => {
             #[cfg(target_os = "macos")]
             {
