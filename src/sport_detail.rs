@@ -26,9 +26,15 @@ impl TryFrom<&[u8]> for SportDetail {
         let month = bcd_to_decimal(value[1]);
         let day = bcd_to_decimal(value[2]);
         let time_index = value[3];
-        let calories = (value[6] as u16) | ((value[7] as u16) << 8);
-        let steps = (value[9] as u16) << 8 | value[8] as u16;
-        let distance = (value[11] as u16) << 8 | value[10] as u16;
+        let mut cal_bytes = [0u8;2];
+        cal_bytes.copy_from_slice(&value[6..8]);
+        let calories = u16::from_le_bytes(cal_bytes);
+        let mut step_bytes = [0u8;2];
+        step_bytes.copy_from_slice(&value[8..10]);
+        let steps = u16::from_le_bytes(step_bytes);
+        let mut dist_bytes = [0u8;2];
+        dist_bytes.copy_from_slice(&value[10..12]);
+        let distance = u16::from_le_bytes(dist_bytes);
 
         Ok(Self {
             year,
