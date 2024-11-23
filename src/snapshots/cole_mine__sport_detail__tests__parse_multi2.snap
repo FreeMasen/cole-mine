@@ -1,0 +1,62 @@
+---
+source: src/sport_detail.rs
+expression: state
+---
+Complete {
+    packets: [
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 60,
+            calories: 1590,
+            steps: 33,
+            distance: 22,
+        },
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 64,
+            calories: 880,
+            steps: 22,
+            distance: 13,
+        },
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 68,
+            calories: 5550,
+            steps: 119,
+            distance: 79,
+        },
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 72,
+            calories: 8260,
+            steps: 162,
+            distance: 118,
+        },
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 76,
+            calories: 23920,
+            steps: 563,
+            distance: 342,
+        },
+        SportDetail {
+            year: 2024,
+            month: 11,
+            day: 22,
+            time_index: 80,
+            calories: 1870,
+            steps: 38,
+            distance: 27,
+        },
+    ],
+}

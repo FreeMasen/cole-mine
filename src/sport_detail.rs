@@ -174,6 +174,26 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_multi2() {
+        env_logger::try_init().ok();
+        let mut packets = VecDeque::from_iter([
+            [67, 240, 6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58],
+            [67, 36, 17, 34, 60, 0, 6, 159, 0, 33, 0, 22, 0, 0, 0, 178],
+            [67, 36, 17, 34, 64, 1, 6, 88, 0, 22, 0, 13, 0, 0, 0, 92],
+            [67, 36, 17, 34, 68, 2, 6, 43, 2, 119, 0, 79, 0, 0, 0, 217],
+            [67, 36, 17, 34, 72, 3, 6, 58, 3, 162, 0, 118, 0, 0, 0, 64],
+            [67, 36, 17, 34, 76, 4, 6, 88, 9, 51, 2, 86, 1, 0, 0, 221],
+            [67, 36, 17, 34, 80, 5, 6, 187, 0, 38, 0, 27, 0, 0, 0, 241],
+        ].into_iter());
+        let mut state = SportDetailState::new(packets.pop_front().unwrap()).unwrap();
+        for packet in packets {
+            state.step(packet).unwrap();
+        }
+        assert!(matches!(state, SportDetailState::Complete { .. }), "Expected complete found {state:?}");
+        insta::assert_debug_snapshot!(state);
+    }
+
+    #[test]
     fn test_parse_multi() {
         let mut packets = VecDeque::from_iter(
             [
