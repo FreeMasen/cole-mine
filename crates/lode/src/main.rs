@@ -35,6 +35,12 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SendCommand {
+    Listen {
+        #[cfg(target_os = "macos")]
+        name: String,
+        #[cfg(not(target_os = "macos"))]
+        address: BDAddr,
+    },
     /// Set the time
     ///
     /// optional minutes, hours, days, and years arguments adjust the current time
@@ -125,6 +131,21 @@ async fn main() -> Result {
 
 async fn send_command(cmd: SendCommand) -> Result {
     match cmd {
+        SendCommand::Listen {
+            #[cfg(target_os = "macos")]
+            name,
+            #[cfg(not(target_os = "macos"))]
+            address,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                listen(name).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                listen(address).await
+            }
+        },
         SendCommand::SetTime {
             #[cfg(target_os = "macos")]
             name,
@@ -595,4 +616,30 @@ async fn wait_for_reply(
         }
     }
     Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+async fn listen(name: String) -> Result {
+    let dev = find_device_by_name(&name).await?;
+    let mut client = Client::with_device(dev).await?;
+    let ret = listen_(&mut client).await;
+    client.disconnect().await?;
+    ret
+}
+#[cfg(not(target_os = "macos"))]
+async fn listen(addr: BDAddr) -> Result {
+    let mut client = Client::new(addr).await?;
+    let ret = listen_(&mut client).await;
+    client.disconnect().await?;
+    ret
+}
+
+async fn listen_(client: &mut Client) -> Result {
+    client.connect().await?;
+    while let Ok(Ok(Some(event))) =
+        tokio::time::timeout(Duration::from_secs(5), client.read_next()).await
+    {
+        println!("[{}]: {event:?}", time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap());
+    }
+    Ok(())
 }
