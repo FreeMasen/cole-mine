@@ -90,7 +90,7 @@ impl HeartRateState {
         let timestamp_int = u32::from_le_bytes(timestamp_bytes);
         let timestamp = OffsetDateTime::from_unix_timestamp(timestamp_int as _)?;
         let mut rates = Vec::with_capacity(size as usize * 13);
-        for &byte in &packet[6..] {
+        for &byte in &packet[6..15] {
             rates.push(byte);
         }
         Ok(Self::Recieving {
