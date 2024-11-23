@@ -2,8 +2,10 @@ use clap::{Parser, Subcommand};
 use cole_mine::{
     client::Client,
     client::{Command, CommandReply},
-    BDAddr,
 };
+
+#[cfg(not(target_os = "macos"))]
+use cole_mine::BDAddr;
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -458,7 +460,7 @@ async fn read_hr_config(name: BDAddr) -> Result {
 
 async fn read_hr_config_(client: &mut Client) -> Result {
     client.connect().await?;
-    client.send(Command::BatteryInfo).await?;
+    client.send(Command::GetHeartRateSettings).await?;
     while let Ok(Some(event)) = client.read_next().await {
         if let CommandReply::HeartRateSettings { enabled, interval } = event {
             println!("enabled: {enabled}, interval: {interval}");
