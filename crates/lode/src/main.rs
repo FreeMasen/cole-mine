@@ -84,7 +84,19 @@ enum SendCommand {
         name: String,
         #[cfg(not(target_os = "macos"))]
         addr: BDAddr,
-    }
+    },
+    SetHeartRateSettings {
+        #[cfg(target_os = "macos")]
+        name: String,
+        #[cfg(not(target_os = "macos"))]
+        addr: BDAddr,
+        #[arg(short = 'e', long = "enable")]
+        enabled: bool,
+        #[arg(short = 'd', long = "disable")]
+        disabled: bool,
+        #[arg(short = 'i', long = "interval")]
+        interval: Option<u8>,
+    },
 }
 
 #[tokio::main]
@@ -157,11 +169,19 @@ async fn send_command(cmd: SendCommand) -> Result {
         } => {
             #[cfg(target_os = "macos")]
             {
-                read_heart_rate(name, OffsetDateTime::now_utc().date().previous_day().unwrap()).await
+                read_heart_rate(
+                    name,
+                    OffsetDateTime::now_utc().date().previous_day().unwrap(),
+                )
+                .await
             }
             #[cfg(not(target_os = "macos"))]
             {
-                read_heart_rate(addr, OffsetDateTime::now_utc().date().previous_day().unwrap()).await
+                read_heart_rate(
+                    addr,
+                    OffsetDateTime::now_utc().date().previous_day().unwrap(),
+                )
+                .await
             }
         }
         SendCommand::ReadBatteryInfo {
@@ -192,6 +212,24 @@ async fn send_command(cmd: SendCommand) -> Result {
             #[cfg(not(target_os = "macos"))]
             {
                 read_hr_config(addr).await
+            }
+        }
+        SendCommand::SetHeartRateSettings {
+            #[cfg(target_os = "macos")]
+            name,
+            #[cfg(not(target_os = "macos"))]
+            addr,
+            enabled,
+            disabled,
+            interval,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                write_hr_config(name, enabled, disabled, interval).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                write_hr_config(addr, enabled, disabled, interval).await
             }
         }
     }
@@ -284,7 +322,9 @@ async fn set_time_(
             language: if chinese { 0 } else { 1 },
         })
         .await?;
-    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
+    while let Ok(Ok(Some(event))) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await
+    {
         if !matches!(event, CommandReply::SetTime) {
             eprintln!("Unexpected report from set time: {event:?}");
             continue;
@@ -341,16 +381,23 @@ async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
 async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
     client.connect().await?;
     client.send(Command::ReadSportDetail { day_offset }).await?;
-    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
+    while let Ok(Ok(Some(event))) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await
+    {
         if let CommandReply::SportDetail(details) = event {
             for detail in details {
                 println!(
                     "{}{:02}{:02}-{}",
                     detail.year, detail.month, detail.day, detail.time_index
                 );
-                println!("  Cals: {:>8}", detail.calories);
+                println!("  Cals: {:>5.2}", detail.calories as f32 / 1000.0);
                 println!("  Stps: {:>8}", detail.steps);
-                println!("  Dist: {:>8}", detail.distance);
+                let feet = detail.distance as f32 / 3.28084;
+                if feet > 5280.0 {
+                    println!("  Dist {:>5.2}mi", feet / 5280.0);
+                } else {
+                    println!("  Dist {:>5.2}ft", feet);
+                }
             }
         } else {
             eprintln!("Unexpected report from sport details: {event:?}");
@@ -380,22 +427,24 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
             timestamp: timestamp.try_into().unwrap(),
         })
         .await?;
-    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
-        if let CommandReply::HeartRate(hr) = event {
-            let mut time = target;
-            println!(
-                "Heart Rates {}-{:02}-{:02} {}",
-                target.year(),
-                target.month(),
-                target.day(),
-                hr.range
-            );
-            for rate in hr.rates {
-                println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
-                time += Duration::from_secs(60 * 5);
-            }
-        } else {
-            eprintln!("Unexpected report from heart rate: {event:?}");
+    while let Some(CommandReply::HeartRate(hr)) = wait_for_reply(
+        client,
+        |reply| matches!(reply, CommandReply::HeartRate(_)),
+        "get heart rate info",
+    )
+    .await?
+    {
+        let mut time = target;
+        println!(
+            "Heart Rates {}-{:02}-{:02} {}",
+            target.year(),
+            target.month(),
+            target.day(),
+            hr.range
+        );
+        for rate in hr.rates {
+            println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
+            time += Duration::from_secs(60 * 5);
         }
     }
     Ok(())
@@ -433,17 +482,18 @@ async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
 async fn read_battery_info_(client: &mut Client) -> Result {
     client.connect().await?;
     client.send(Command::BatteryInfo).await?;
-    while let Ok(Some(event)) = client.read_next().await {
-        if let CommandReply::BatteryInfo { level, charging } = event {
-            println!("{level}% {charging}");
-        } else {
-            eprintln!("Unexpected report from battery info: {event:?}");
-        }
-        break;
-    }
+    let Some(CommandReply::BatteryInfo { level, charging }) = wait_for_reply(
+        client,
+        |reply| matches!(reply, CommandReply::BatteryInfo { .. }),
+        "get battery info",
+    )
+    .await?
+    else {
+        return Err("no reply".into());
+    };
+    println!("{level}% {charging}");
     Ok(())
 }
-
 
 #[cfg(target_os = "macos")]
 async fn read_hr_config(name: String) -> Result {
@@ -459,15 +509,98 @@ async fn read_hr_config(name: BDAddr) -> Result {
 }
 
 async fn read_hr_config_(client: &mut Client) -> Result {
+    let (enabled, interval) = get_current_config(client).await?;
+    println!("enabled: {enabled}, interval: {interval}");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+async fn write_hr_config(
+    name: String,
+    enabled: bool,
+    disabled: bool,
+    interval: Option<u8>,
+) -> Result {
+    let dev = find_device_by_name(&name).await?;
+    let mut client = Client::with_device(dev).await?;
+    write_hr_config_(&mut client, enabled, disabled, interval).await
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn write_hr_config(
+    name: BDAddr,
+    enabled: bool,
+    disabled: bool,
+    interval: Option<u8>,
+) -> Result {
+    let mut client = Client::new(name).await?;
+    write_hr_config_(&mut client, enabled, disabled, interval).await
+}
+
+async fn write_hr_config_(
+    client: &mut Client,
+    set_enabled: bool,
+    set_disabled: bool,
+    set_interval: Option<u8>,
+) -> Result {
+    let (mut enabled, mut interval) = get_current_config(client).await?;
+    if set_enabled {
+        enabled = true;
+    }
+    if !set_disabled {
+        enabled = false;
+    }
+    if let Some(set_interval) = set_interval {
+        interval = set_interval;
+    }
+    client
+        .send(Command::SetHeartRateSettings { enabled, interval })
+        .await?;
+    let Some(CommandReply::HeartRateSettings { enabled, interval }) = wait_for_reply(
+        client,
+        |reply| matches!(reply, CommandReply::HeartRateSettings { .. }),
+        "set heart rate settings",
+    )
+    .await?
+    else {
+        unreachable!()
+    };
+    println!("Updated enabled: {enabled}, interval: {interval}");
+
+    Ok(())
+}
+
+async fn get_current_config(client: &mut Client) -> Result<(bool, u8)> {
     client.connect().await?;
     client.send(Command::GetHeartRateSettings).await?;
-    while let Ok(Some(event)) = client.read_next().await {
-        if let CommandReply::HeartRateSettings { enabled, interval } = event {
-            println!("enabled: {enabled}, interval: {interval}");
-        } else {
-            eprintln!("Unexpected report from hr config: {event:?}");
-        }
-        break;
+    if let Some(event) = wait_for_reply(
+        client,
+        |event| matches!(event, CommandReply::HeartRateSettings { .. }),
+        "get heart rate settings",
+    )
+    .await?
+    {
+        let CommandReply::HeartRateSettings { enabled, interval } = event else {
+            unreachable!()
+        };
+        return Ok((enabled, interval));
     }
-    Ok(())
+    Err("Failed to read heart rate settings".into())
+}
+
+async fn wait_for_reply(
+    client: &mut Client,
+    matcher: impl Fn(&CommandReply) -> bool + 'static,
+    name: &str,
+) -> Result<Option<CommandReply>> {
+    while let Ok(Ok(Some(event))) =
+        tokio::time::timeout(Duration::from_secs(5), client.read_next()).await
+    {
+        if matcher(&event) {
+            return Ok(Some(event));
+        } else {
+            eprintln!("Unexpected report from {name}: {event:?}");
+        }
+    }
+    Ok(None)
 }

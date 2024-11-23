@@ -376,6 +376,7 @@ pub enum CommandReply {
     SetTime,
     Reboot,
     StopRealTime,
+    SetHrSettings,
     Unknown(Vec<u8>),
 }
 
