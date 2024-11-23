@@ -261,9 +261,10 @@ async fn set_time_(
             language: if chinese { 0 } else { 1 },
         })
         .await?;
-    while let Ok(Some(event)) = client.read_next().await {
+    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
         if !matches!(event, CommandReply::SetTime) {
             eprintln!("Unexpected report from set time: {event:?}");
+            continue;
         }
         break;
     }
@@ -317,7 +318,7 @@ async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
 async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
     client.connect().await?;
     client.send(Command::ReadSportDetail { day_offset }).await?;
-    while let Ok(Some(event)) = client.read_next().await {
+    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
         if let CommandReply::SportDetail(details) = event {
             for detail in details {
                 println!(
@@ -356,7 +357,7 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
             timestamp: timestamp.try_into().unwrap(),
         })
         .await?;
-    while let Ok(Some(event)) = client.read_next().await {
+    while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
         if let CommandReply::HeartRate(hr) = event {
             let time = target;
             println!(
