@@ -394,9 +394,9 @@ async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
                 println!("  Stps: {:>8}", detail.steps);
                 let feet = detail.distance as f32 / 3.28084;
                 if feet > 5280.0 {
-                    println!("  Dist {:>5.2}mi", feet / 5280.0);
+                    println!("  Dist: {:>8.2}mi", feet / 5280.0);
                 } else {
-                    println!("  Dist {:>5.2}ft", feet);
+                    println!("  Dist: {:>8.2}ft", feet);
                 }
             }
         } else {
