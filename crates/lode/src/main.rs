@@ -149,11 +149,11 @@ async fn send_command(cmd: SendCommand) -> Result {
         } => {
             #[cfg(target_os = "macos")]
             {
-                read_heart_rate(name, OffsetDateTime::now_utc().date()).await
+                read_heart_rate(name, OffsetDateTime::now_utc().date().previous_day()).await
             }
             #[cfg(not(target_os = "macos"))]
             {
-                read_heart_rate(addr, OffsetDateTime::now_utc().date()).await
+                read_heart_rate(addr, OffsetDateTime::now_utc().date().previous_day()).await
             }
         }
         SendCommand::ReadBatteryInfo {
