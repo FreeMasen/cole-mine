@@ -35,6 +35,15 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SendCommand {
+    Raw {
+        #[cfg(target_os = "macos")]
+        name: String,
+        #[cfg(not(target_os = "macos"))]
+        address: BDAddr,
+        // a hex encoded byte array with colons seperating
+        commands: Vec<String>,
+        listen_seconds: Option<u64>,
+    },
     Listen {
         #[cfg(target_os = "macos")]
         name: String,
@@ -131,6 +140,23 @@ async fn main() -> Result {
 
 async fn send_command(cmd: SendCommand) -> Result {
     match cmd {
+        SendCommand::Raw {
+            #[cfg(target_os = "macos")]
+            name,
+            #[cfg(not(target_os = "macos"))]
+            address,
+            commands,
+            listen_seconds,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                send_raw(name, commands, listen_seconds).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                send_raw(address, commands, listen_seconds).await
+            }
+        }
         SendCommand::Listen {
             #[cfg(target_os = "macos")]
             name,
@@ -145,7 +171,7 @@ async fn send_command(cmd: SendCommand) -> Result {
             {
                 listen(address).await
             }
-        },
+        }
         SendCommand::SetTime {
             #[cfg(target_os = "macos")]
             name,
@@ -343,7 +369,12 @@ async fn set_time_(
             language: if chinese { 0 } else { 1 },
         })
         .await?;
-    let _ = wait_for_reply(client, |reply| matches!(reply, CommandReply::SetTime), "set time").await?;
+    let _ = wait_for_reply(
+        client,
+        |reply| matches!(reply, CommandReply::SetTime),
+        "set time",
+    )
+    .await?;
     client.disconnect().await
 }
 
@@ -639,7 +670,61 @@ async fn listen_(client: &mut Client) -> Result {
     while let Ok(Ok(Some(event))) =
         tokio::time::timeout(Duration::from_secs(60), client.read_next()).await
     {
-        println!("[{}]: {event:?}", time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap());
+        println!(
+            "[{}]: {event:?}",
+            time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap()
+        );
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+async fn send_raw(name: String, commands: Vec<String>, listen_seconds: Option<u64>) -> Result {
+    let dev = find_device_by_name(&name).await?;
+    let mut client = Client::with_device(dev).await?;
+    let ret = send_raw_(&mut client, commands, listen_seconds).await;
+    client.disconnect().await?;
+    ret
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn send_raw(addr: BDAddr, commands: Vec<String>, listen_seconds: Option<u64>) -> Result {
+    let mut client = Client::new(addr).await?;
+    let ret = send_raw_(&mut client, commands, listen_seconds).await;
+    client.disconnect().await?;
+    ret
+}
+async fn send_raw_(
+    client: &mut Client,
+    commands: Vec<String>,
+    listen_seconds: Option<u64>,
+) -> Result {
+    client.connect().await?;
+    for command in commands
+        .into_iter()
+        .filter_map(|s| parse_command(s.as_str()))
+    {
+        client.send(Command::Raw(command)).await?;
+    }
+    let Some(listening_for) = listen_seconds else {
+        return Ok(());
+    };
+    let to = Duration::from_secs(listening_for);
+    tokio::time::timeout(to, async {
+        while let Ok(Some(reply)) = client.read_next().await {
+            println!("{reply:?}");
+        }
+    })
+    .await
+    .ok();
+    Ok(())
+}
+
+fn parse_command(s: &str) -> Option<Vec<u8>> {
+    s.split(':')
+        .map(|hex| Ok(u8::from_str_radix(hex, 16)?))
+        .collect::<Result<Vec<u8>>>()
+        .ok()
 }

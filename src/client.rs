@@ -305,6 +305,7 @@ pub enum Command {
     },
     BlinkTwice,
     BatteryInfo,
+    Raw(Vec<u8>),
 }
 
 impl From<Command> for [u8; 16] {
@@ -363,6 +364,13 @@ impl From<Command> for [u8; 16] {
             }
             Command::BatteryInfo => {
                 ret[0] = 3;
+            },
+            Command::Raw(mut bytes) => {
+                if bytes.len() > 15 {
+                    log::warn!("truncating message longer than 15 bytes");
+                    bytes.resize(16, 0);
+                }
+                ret[0..15].copy_from_slice(&bytes[0..15]);
             }
         }
         ret[15] = checksum(&ret);
