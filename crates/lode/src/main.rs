@@ -359,7 +359,7 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
         .await?;
     while let Ok(Ok(Some(event))) = tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await {
         if let CommandReply::HeartRate(hr) = event {
-            let time = target;
+            let mut time = target;
             println!(
                 "Heart Rates {}-{:02}-{:02} {}",
                 target.year(),
