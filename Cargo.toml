@@ -3,6 +3,12 @@ name = "cole-mine"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = [
+    ".",
+    "crates/*"
+]
+
 [dependencies]
 async-stream = "0.3.6"
 bleasy = "0.3.1"

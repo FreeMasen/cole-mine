@@ -41,7 +41,9 @@ enum SendCommand {
         #[cfg(not(target_os = "macos"))]
         address: BDAddr,
         // a hex encoded byte array with colons seperating
+        #[arg(short = 'c', long = "command")]
         commands: Vec<String>,
+        #[arg(short = 'l', long = "listen")]
         listen_seconds: Option<u64>,
     },
     Listen {
@@ -112,6 +114,12 @@ enum SendCommand {
         #[arg(short = 'i', long = "interval")]
         interval: Option<u8>,
     },
+    Blink {
+        #[cfg(target_os = "macos")]
+        name: String,
+        #[cfg(not(target_os = "macos"))]
+        addr: BDAddr,
+    }
 }
 
 #[tokio::main]
@@ -165,11 +173,11 @@ async fn send_command(cmd: SendCommand) -> Result {
         } => {
             #[cfg(target_os = "macos")]
             {
-                listen(name).await
+                send_raw(name, Vec::new(), Some(120)).await
             }
             #[cfg(not(target_os = "macos"))]
             {
-                listen(address).await
+                send_raw(address, Vec::new(), Some(120)).await
             }
         }
         SendCommand::SetTime {
@@ -277,6 +285,21 @@ async fn send_command(cmd: SendCommand) -> Result {
             #[cfg(not(target_os = "macos"))]
             {
                 write_hr_config(addr, enabled, disabled, interval).await
+            }
+        }
+        SendCommand::Blink {
+            #[cfg(target_os = "macos")]
+            name,
+            #[cfg(not(target_os = "macos"))]
+            addr,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                blink(name).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                blink(addr).await
             }
         }
     }
@@ -650,37 +673,6 @@ async fn wait_for_reply(
 }
 
 #[cfg(target_os = "macos")]
-async fn listen(name: String) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    let ret = listen_(&mut client).await;
-    client.disconnect().await?;
-    ret
-}
-#[cfg(not(target_os = "macos"))]
-async fn listen(addr: BDAddr) -> Result {
-    let mut client = Client::new(addr).await?;
-    let ret = listen_(&mut client).await;
-    client.disconnect().await?;
-    ret
-}
-
-async fn listen_(client: &mut Client) -> Result {
-    client.connect().await?;
-    while let Ok(Ok(Some(event))) =
-        tokio::time::timeout(Duration::from_secs(60), client.read_next()).await
-    {
-        println!(
-            "[{}]: {event:?}",
-            time::OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap()
-        );
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
 async fn send_raw(name: String, commands: Vec<String>, listen_seconds: Option<u64>) -> Result {
     let dev = find_device_by_name(&name).await?;
     let mut client = Client::with_device(dev).await?;
@@ -727,4 +719,27 @@ fn parse_command(s: &str) -> Option<Vec<u8>> {
         .map(|hex| Ok(u8::from_str_radix(hex, 16)?))
         .collect::<Result<Vec<u8>>>()
         .ok()
+}
+
+#[cfg(target_os = "macos")]
+async fn blink(name: String) -> Result {
+    let dev = find_device_by_name(&name).await?;
+    let mut client = Client::with_device(dev).await?;
+    let ret = blink_(&mut client).await;
+    client.disconnect().await?;
+    ret
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn blink(addr: BDAddr) -> Result {
+    let mut client = Client::new(addr).await?;
+    let ret = blink_(&mut client).await;
+    client.disconnect().await?;
+    ret
+}
+
+async fn blink_(client: &mut Client) -> Result {
+    client.send(Command::BlinkTwice).await?;
+    let _ = wait_for_reply(client, |reply| matches!(reply, CommandReply::BlinkTwice), "blink").await?;
+    Ok(())
 }
