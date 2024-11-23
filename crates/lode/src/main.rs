@@ -77,6 +77,12 @@ enum SendCommand {
         #[cfg(not(target_os = "macos"))]
         addr: BDAddr,
     },
+    GetHeartRateSettings {
+        #[cfg(target_os = "macos")]
+        name: String,
+        #[cfg(not(target_os = "macos"))]
+        addr: BDAddr,
+    }
 }
 
 #[tokio::main]
@@ -169,6 +175,21 @@ async fn send_command(cmd: SendCommand) -> Result {
             #[cfg(not(target_os = "macos"))]
             {
                 read_battery_info(addr).await
+            }
+        }
+        SendCommand::GetHeartRateSettings {
+            #[cfg(target_os = "macos")]
+            name,
+            #[cfg(not(target_os = "macos"))]
+            address,
+        } => {
+            #[cfg(target_os = "macos")]
+            {
+                read_hr_config(name).await
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                read_hr_config(addr).await
             }
         }
     }
@@ -286,12 +307,12 @@ async fn get_device_details(addr: BDAddr) -> Result {
 
 async fn get_device_details_(client: &mut Client) -> Result {
     let details = client.device_details().await?;
-    print!(
-        "Hardware:{}",
+    println!(
+        "Hardware: {}",
         details.hw.unwrap_or_else(|| "<not found>".to_string())
     );
-    print!(
-        "Firmware:{}",
+    println!(
+        "Firmware: {}",
         details.fw.unwrap_or_else(|| "<not found>".to_string())
     );
     Ok(())
@@ -415,6 +436,34 @@ async fn read_battery_info_(client: &mut Client) -> Result {
             println!("{level}% {charging}");
         } else {
             eprintln!("Unexpected report from battery info: {event:?}");
+        }
+        break;
+    }
+    Ok(())
+}
+
+
+#[cfg(target_os = "macos")]
+async fn read_hr_config(name: String) -> Result {
+    let dev = find_device_by_name(&name).await?;
+    let mut client = Client::with_device(dev).await?;
+    read_hr_config_(&mut client).await
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn read_hr_config(name: BDAddr) -> Result {
+    let mut client = Client::new(name).await?;
+    read_hr_config_(&mut client).await
+}
+
+async fn read_hr_config_(client: &mut Client) -> Result {
+    client.connect().await?;
+    client.send(Command::BatteryInfo).await?;
+    while let Ok(Some(event)) = client.read_next().await {
+        if let CommandReply::HeartRateSettings { enabled, interval } = event {
+            println!("enabled: {enabled}, interval: {interval}");
+        } else {
+            eprintln!("Unexpected report from hr config: {event:?}");
         }
         break;
     }
