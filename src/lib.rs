@@ -41,8 +41,22 @@ pub(crate) const DEVICE_NAME_PREFIXES: &[&str] = &[
 
 pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
     log::trace!("discover({all})");
-    let mut scanner = bleasy::Scanner::new();
     let mut config = ScanConfig::default();
+    if all {
+        config = config.filter_by_name(|n| DEVICE_NAME_PREFIXES.iter().any(|p| n.starts_with(*p)));
+    }
+    discover_(config).await
+}
+
+pub async fn discover_by_name(name: String) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
+    let config = ScanConfig::default()
+        .filter_by_name(move |n| n == name)
+        .force_disconnect(true);
+    discover_(config).await
+}
+
+async fn discover_(mut config: ScanConfig) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
+    let mut scanner = bleasy::Scanner::new();
     if let Some(max_op_secs) = std::env::var("COLE_MINE_MAX_TIMEOUT_SECS")
         .ok()
         .and_then(|a| a.parse::<u64>().ok())
@@ -56,19 +70,7 @@ pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> 
         let mut stream = scanner.device_stream();
         while let Some(dev) = stream.next().await {
             log::debug!("Stream returned device");
-            if all {
-                yield dev;
-            } else if let Some(name) = dev.local_name().await {
-                if DEVICE_NAME_PREFIXES
-                .iter()
-                .any(|pre| name.trim().starts_with(*pre)) {
-                    yield dev;
-                } else {
-                    log::debug!("Skipping device for name mismatch `{name}`");
-                }
-            } else {
-                log::debug!("Skipping device with no local name {}", dev.address());
-            }
+            yield dev;
         }
     }
     .boxed_local())

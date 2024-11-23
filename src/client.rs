@@ -30,13 +30,17 @@ impl futures::Stream for ClientReceiver {
 
 impl ClientReceiver {
     pub async fn connect_device(device: &Device) -> Result<Self> {
-        let service = Client::find_uart_service(device).await?;
+        let service = Client::find_uart_service(device).await.map_err(|e| {
+            format!("Error finding UART service: {e}")
+        })?;
         let char = service
             .characteristics()
             .into_iter()
-            .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
+            .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
             .ok_or_else(|| "Unable to find RX characteristic".to_string())?;
-        let incoming_stream = char.subscribe().await?;
+        let incoming_stream = char.subscribe().await.map_err(|e| {
+            format!("Failed to subscribe to the tx char: {e}")
+        })?;
         Ok(Self::from_stream(incoming_stream))
     }
 
@@ -134,8 +138,7 @@ impl Client {
         s.start(
             ScanConfig::default()
                 .filter_by_address(move |w| w == addr)
-                .stop_after_first_match()
-                .stop_after_timeout(std::time::Duration::from_secs(5)),
+                .stop_after_first_match(),
         )
         .await?;
         let device = s
@@ -143,7 +146,13 @@ impl Client {
             .next()
             .await
             .ok_or_else(|| "No device found".to_string())?;
-        let tx = Self::find_uart_tx_characteristic(&device).await?;
+        Self::with_device(device).await
+    }
+
+    pub async fn with_device(device: Device) -> Result<Self> {
+        let tx = Self::find_uart_rx_characteristic(&device).await.map_err(|e| {
+            format!("Error looking up uart_rx characteristic: {e}")
+        })?;
         Ok(Self {
             device,
             tx,
@@ -158,7 +167,9 @@ impl Client {
 
     pub async fn send(&mut self, command: Command) -> Result {
         let cmd_bytes: [u8; 16] = command.into();
-        Ok(self.tx.write_command(&cmd_bytes).await?)
+        Ok(self.tx.write_command(&cmd_bytes).await.map_err(|e| {
+            format!("Failed to write command: {e}")
+        })?)
     }
 
     pub async fn read_next(&mut self) -> Result<Option<CommandReply>> {
@@ -173,12 +184,12 @@ impl Client {
         Ok(rx.0.next().await)
     }
 
-    async fn find_uart_tx_characteristic(device: &Device) -> Result<Characteristic> {
+    async fn find_uart_rx_characteristic(device: &Device) -> Result<Characteristic> {
         let service = Self::find_uart_service(device).await?;
         let char = service
             .characteristics()
             .into_iter()
-            .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
+            .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
             .ok_or_else(|| "Unable to find TX characteristic".to_string())?;
         Ok(char)
     }
