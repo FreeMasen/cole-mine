@@ -368,7 +368,7 @@ async fn read_sport_details(name: String, day_offset: u8) -> Result {
 #[cfg(not(target_os = "macos"))]
 async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
     let mut client = Client::new(addr).await?;
-    read_sport_details_(&mut client, day_offset).await?;
+    read_sport_details_(&mut client, day_offset).await
 }
 async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
     client.connect().await?;
