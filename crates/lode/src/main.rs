@@ -322,16 +322,8 @@ async fn set_time_(
             language: if chinese { 0 } else { 1 },
         })
         .await?;
-    while let Ok(Ok(Some(event))) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await
-    {
-        if !matches!(event, CommandReply::SetTime) {
-            eprintln!("Unexpected report from set time: {event:?}");
-            continue;
-        }
-        break;
-    }
-    Ok(())
+    let _ = wait_for_reply(client, |reply| matches!(reply, CommandReply::SetTime), "set time").await?;
+    client.disconnect().await
 }
 
 #[cfg(target_os = "macos")]
@@ -357,7 +349,7 @@ async fn get_device_details_(client: &mut Client) -> Result {
         "Firmware: {}",
         details.fw.unwrap_or_else(|| "<not found>".to_string())
     );
-    Ok(())
+    client.disconnect().await
 }
 
 fn get_duration(mul: u64, unit: isize) -> (Duration, bool) {
@@ -376,7 +368,7 @@ async fn read_sport_details(name: String, day_offset: u8) -> Result {
 #[cfg(not(target_os = "macos"))]
 async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
     let mut client = Client::new(addr).await?;
-    read_sport_details_(&mut client, day_offset).await
+    read_sport_details_(&mut client, day_offset).await?;
 }
 async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
     client.connect().await?;
@@ -403,7 +395,7 @@ async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
             eprintln!("Unexpected report from sport details: {event:?}");
         }
     }
-    Ok(())
+    client.disconnect().await
 }
 
 #[cfg(target_os = "macos")]
@@ -447,7 +439,7 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
             time += Duration::from_secs(60 * 5);
         }
     }
-    Ok(())
+    client.disconnect().await
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -492,7 +484,7 @@ async fn read_battery_info_(client: &mut Client) -> Result {
         return Err("no reply".into());
     };
     println!("{level}% {charging}");
-    Ok(())
+    client.disconnect().await
 }
 
 #[cfg(target_os = "macos")]
@@ -511,7 +503,7 @@ async fn read_hr_config(name: BDAddr) -> Result {
 async fn read_hr_config_(client: &mut Client) -> Result {
     let (enabled, interval) = get_current_config(client).await?;
     println!("enabled: {enabled}, interval: {interval}");
-    Ok(())
+    client.disconnect().await
 }
 
 #[cfg(target_os = "macos")]
@@ -563,11 +555,11 @@ async fn write_hr_config_(
     )
     .await?
     else {
+        client.disconnect().await?;
         unreachable!()
     };
     println!("Updated enabled: {enabled}, interval: {interval}");
-
-    Ok(())
+    client.disconnect().await
 }
 
 async fn get_current_config(client: &mut Client) -> Result<(bool, u8)> {

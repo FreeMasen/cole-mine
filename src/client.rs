@@ -199,6 +199,12 @@ impl Client {
         Ok(())
     }
 
+    pub async fn disconnect(&mut self) -> Result {
+        self.device.disconnect().await?;
+        self.rx = None;
+        Ok(())
+    }
+
     pub async fn send(&mut self, command: Command) -> Result {
         log::trace!("sending {command:?}");
         let cmd_bytes: [u8; 16] = command.into();
