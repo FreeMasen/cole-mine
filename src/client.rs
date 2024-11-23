@@ -1,7 +1,7 @@
 use std::pin::Pin;
 
 use bleasy::{Characteristic, Device, ScanConfig, Service};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 
 use crate::{
     heart_rate::{HeartRate, HeartRateState},
@@ -49,23 +49,36 @@ impl ClientReceiver {
             async_stream::stream! {
                 let mut partial_states = MultiPacketStates::default();
                 while let Some(ev) = stream.next().await {
+                    log::trace!("raw packet: {ev:?}");
                     let Some(tag) = ev.first() else {
                         continue;
                     };
                     let mut packet = [0u8; 16];
                     packet.copy_from_slice(&ev);
                     let cmd = match *tag {
-                        1 => CommandReply::SetTime,
-                        3 => CommandReply::BatteryInfo {
-                            level: ev[1],
-                            charging: ev[2] > 0,
+                        1 => {
+                            log::debug!("SetTime Reply");
+                            CommandReply::SetTime
                         },
-                        8 => CommandReply::Reboot,
+                        3 =>{
+                            log::debug!("Battery Info Reply {}, {}", ev[1], ev[2]);
+                            CommandReply::BatteryInfo {
+                                level: ev[1],
+                                charging: ev[2] > 0,
+                            }
+                        },
+                        8 => {
+                            log::debug!("Reboot Reply");
+                            CommandReply::Reboot
+                        },
                         16 => {
+                            log::debug!("BlinkTwice Reply");
                             CommandReply::BlinkTwice
                         },
                         21 => {
+                            log::debug!("Heart Rate Reply");
                             if let Some(mut s) = partial_states.heart_rate_state.take() {
+                                log::debug!("Stepping heart rate state");
                                 if s.step(packet).is_err() {
                                     continue;
                                 }
@@ -73,6 +86,7 @@ impl ClientReceiver {
                                     partial_states.heart_rate_state = Some(s);
                                     continue;
                                 };
+                                log::debug!("hear rate state complete");
                                 CommandReply::HeartRate(HeartRate { range, rates, date })
                             } else {
                                 partial_states.sport_detail = SportDetailState::new(packet).ok();
@@ -80,9 +94,11 @@ impl ClientReceiver {
                             }
                         },
                         22 if packet[2] == 1 || packet[2] == 2 => {
+                            log::debug!("HeartRateSettings reply");
                             CommandReply::HeartRateSettings { enabled: packet[2] == 1, interval: packet[3] }
                         },
                         67 => {
+                            log::debug!("Sport Detail reply");
                             if let Some(mut ss) = partial_states.sport_detail.take() {
                                 if ss.step(packet).is_err() {
                                     continue;
@@ -98,6 +114,7 @@ impl ClientReceiver {
                             }
                         },
                         105 => {
+                            log::debug!("RealTime Reply");
                             let ev = if packet[2] != 0 {
                                 RealTimeEvent::Error(packet[2])
                             } else if packet[1] == 1 {
@@ -107,8 +124,14 @@ impl ClientReceiver {
                             };
                             CommandReply::RealTimeData(ev)
                         }
-                        106 => CommandReply::StopRealTime,
-                        _ => CommandReply::Unknown(ev),
+                        106 => {
+                            log::debug!("StopRealTime reply");
+                            CommandReply::StopRealTime
+                        },
+                        _ => {
+                            log::debug!("Unknown reply");
+                            CommandReply::Unknown(ev)
+                        },
                     };
                     yield cmd;
                 }
@@ -166,7 +189,9 @@ impl Client {
     }
 
     pub async fn send(&mut self, command: Command) -> Result {
+        log::trace!("sending {command:?}");
         let cmd_bytes: [u8; 16] = command.into();
+        log::trace!("serialized: {cmd_bytes:?}");
         Ok(self.tx.write_command(&cmd_bytes).await.map_err(|e| {
             format!("Failed to write command: {e}")
         })?)
@@ -181,7 +206,10 @@ impl Client {
                 .to_string()
                 .into());
         };
-        Ok(rx.0.next().await)
+        Ok(rx.0.next().map(|rply| {
+            log::trace!("reply: {rply:?}");
+            rply
+        }).await)
     }
 
     async fn find_uart_rx_characteristic(device: &Device) -> Result<Characteristic> {
@@ -197,10 +225,14 @@ impl Client {
     async fn find_uart_service(device: &Device) -> Result<Service> {
         Ok(device
             .services()
-            .await?
+            .await
+            .map_err(|e| {
+                format!("Device failed to provide services: {e}")
+            })?
             .into_iter()
             .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
-            .ok_or_else(|| "Unable to find UART service".to_string())?)
+            .ok_or_else(|| "Unable to find UART service".to_string())
+            .inspect(|_| log::trace!("Found UART service!"))?)
     }
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
