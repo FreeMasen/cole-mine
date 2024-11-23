@@ -89,8 +89,19 @@ impl ClientReceiver {
                                 log::debug!("hear rate state complete");
                                 CommandReply::HeartRate(HeartRate { range, rates, date })
                             } else {
-                                partial_states.sport_detail = SportDetailState::new(packet).ok();
-                                continue;
+                                match HeartRateState::try_from(&packet[1..]) {
+                                    Ok(HeartRateState::Complete { date, range, rates}) => {
+                                        CommandReply::HeartRate(HeartRate { range, rates, date })
+                                    },
+                                    Ok(other) => {
+                                        partial_states.heart_rate_state = Some(other);
+                                        continue;
+                                    },
+                                    Err(e) => {
+                                        log::error!("failed to convert heart rate packet to state {packet:?}: {e}");
+                                        CommandReply::Unknown(ev)
+                                    }
+                                }
                             }
                         },
                         22 if packet[2] == 1 || packet[2] == 2 => {
