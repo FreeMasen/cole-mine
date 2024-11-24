@@ -1,4 +1,3 @@
-use bleasy::BDAddr;
 use clap::{Parser, Subcommand};
 use cole_mine::{
     client::Client,
