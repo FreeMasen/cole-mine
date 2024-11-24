@@ -1,3 +1,4 @@
+use bleasy::BDAddr;
 use clap::{Parser, Subcommand};
 use cole_mine::{
     client::Client,
@@ -76,6 +77,11 @@ enum SendCommand {
         #[arg(short = 'c', long = "chinese")]
         chinese: bool,
     },
+    ReadStress {
+        addr: BDAddr,
+        #[arg(default_value_t = 0)]
+        day_offset: u8,
+    },
     ReadSportDetail {
         #[cfg(target_os = "macos")]
         name: String,
@@ -119,7 +125,7 @@ enum SendCommand {
         name: String,
         #[cfg(not(target_os = "macos"))]
         addr: BDAddr,
-    }
+    },
 }
 
 #[tokio::main]
@@ -165,6 +171,7 @@ async fn send_command(cmd: SendCommand) -> Result {
                 send_raw(address, commands, listen_seconds).await
             }
         }
+        SendCommand::ReadStress { addr, day_offset } => read_stress(addr, day_offset).await,
         SendCommand::Listen {
             #[cfg(target_os = "macos")]
             name,
@@ -501,7 +508,12 @@ async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
     )
     .await?
     {
-        let mut time = target;
+        let mut time = if let Ok(now) = OffsetDateTime::now_local() {
+            let local_offset = now.offset();
+            target.replace_offset(local_offset)
+        } else {
+            target
+        };
         println!(
             "Heart Rates {}-{:02}-{:02} {}",
             target.year(),
@@ -740,6 +752,47 @@ async fn blink(addr: BDAddr) -> Result {
 
 async fn blink_(client: &mut Client) -> Result {
     client.send(Command::BlinkTwice).await?;
-    let _ = wait_for_reply(client, |reply| matches!(reply, CommandReply::BlinkTwice), "blink").await?;
+    let _ = wait_for_reply(
+        client,
+        |reply| matches!(reply, CommandReply::BlinkTwice),
+        "blink",
+    )
+    .await?;
     Ok(())
+}
+
+async fn read_stress(addr: BDAddr, mut day_offset: u8) -> Result {
+    let mut start = OffsetDateTime::now_utc().date().midnight();
+    while day_offset > 0 {
+        day_offset -= 1;
+        start = start
+            .date()
+            .previous_day()
+            .ok_or_else(|| format!("time math...."))?
+            .midnight();
+    }
+
+    let mut client = Client::new(addr).await?;
+    let ret = client.send(Command::ReadStress { day_offset }).await;
+    if ret.is_ok() {
+        while let Ok(Some(CommandReply::Stress {
+            time_interval_sec,
+            measurements,
+        })) = client.read_next().await
+        {
+            let minutes_in_a_day = 24 * 60;
+            let segments = time_interval_sec / minutes_in_a_day;
+            for i in 0..segments as u64 {
+                let time = start + Duration::from_secs(time_interval_sec as u64 * i);
+                println!(
+                    "{}: {}",
+                    time.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap(),
+                    &measurements[i as usize]
+                )
+            }
+        }
+    }
+    client.disconnect().await?;
+    ret
 }

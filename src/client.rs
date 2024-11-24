@@ -6,6 +6,7 @@ use futures::{FutureExt, Stream, StreamExt};
 use crate::{
     heart_rate::{HeartRate, HeartRateState},
     sport_detail::{SportDetail, SportDetailState},
+    stress::StressState,
     Result,
 };
 
@@ -30,17 +31,18 @@ impl futures::Stream for ClientReceiver {
 
 impl ClientReceiver {
     pub async fn connect_device(device: &Device) -> Result<Self> {
-        let service = Client::find_uart_service(device).await.map_err(|e| {
-            format!("Error finding UART service: {e}")
-        })?;
+        let service = Client::find_uart_service(device)
+            .await
+            .map_err(|e| format!("Error finding UART service: {e}"))?;
         let char = service
             .characteristics()
             .into_iter()
             .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
             .ok_or_else(|| "Unable to find RX characteristic".to_string())?;
-        let incoming_stream = char.subscribe().await.map_err(|e| {
-            format!("Failed to subscribe to the tx char: {e}")
-        })?;
+        let incoming_stream = char
+            .subscribe()
+            .await
+            .map_err(|e| format!("Failed to subscribe to the tx char: {e}"))?;
         Ok(Self::from_stream(incoming_stream))
     }
 
@@ -108,6 +110,25 @@ impl ClientReceiver {
                             log::debug!("HeartRateSettings reply");
                             CommandReply::HeartRateSettings { enabled: packet[2] == 1, interval: packet[3] }
                         },
+                        55 => {
+                            log::debug!("Stress reply");
+                            if let Some(mut ss) = partial_states.stress_state.take() {
+                                if ss.step(packet).is_err() {
+                                    continue;
+                                }
+                                let StressState::Complete { measurements, minutes_appart } = ss else {
+                                    partial_states.stress_state = Some(ss);
+                                    continue;
+                                };
+                                CommandReply::Stress {
+                                    time_interval_sec: minutes_appart,
+                                    measurements,
+                                }
+                            } else {
+                                partial_states.stress_state = StressState::new(packet).ok();
+                                continue;
+                            }
+                        }
                         67 => {
                             log::debug!("Sport Detail reply");
                             if let Some(mut ss) = partial_states.sport_detail.take() {
@@ -163,6 +184,7 @@ pub struct DeviceDetails {
 pub struct MultiPacketStates {
     sport_detail: Option<SportDetailState>,
     heart_rate_state: Option<HeartRateState>,
+    stress_state: Option<StressState>,
 }
 
 impl Client {
@@ -184,9 +206,9 @@ impl Client {
     }
 
     pub async fn with_device(device: Device) -> Result<Self> {
-        let tx = Self::find_uart_rx_characteristic(&device).await.map_err(|e| {
-            format!("Error looking up uart_rx characteristic: {e}")
-        })?;
+        let tx = Self::find_uart_rx_characteristic(&device)
+            .await
+            .map_err(|e| format!("Error looking up uart_rx characteristic: {e}"))?;
         Ok(Self {
             device,
             tx,
@@ -209,9 +231,11 @@ impl Client {
         log::trace!("sending {command:?}");
         let cmd_bytes: [u8; 16] = command.into();
         log::trace!("serialized: {cmd_bytes:?}");
-        Ok(self.tx.write_command(&cmd_bytes).await.map_err(|e| {
-            format!("Failed to write command: {e}")
-        })?)
+        Ok(self
+            .tx
+            .write_command(&cmd_bytes)
+            .await
+            .map_err(|e| format!("Failed to write command: {e}"))?)
     }
 
     pub async fn read_next(&mut self) -> Result<Option<CommandReply>> {
@@ -223,10 +247,14 @@ impl Client {
                 .to_string()
                 .into());
         };
-        Ok(rx.0.next().map(|rply| {
-            log::trace!("reply: {rply:?}");
-            rply
-        }).await)
+        Ok(rx
+            .0
+            .next()
+            .map(|rply| {
+                log::trace!("reply: {rply:?}");
+                rply
+            })
+            .await)
     }
 
     async fn find_uart_rx_characteristic(device: &Device) -> Result<Characteristic> {
@@ -243,9 +271,7 @@ impl Client {
         Ok(device
             .services()
             .await
-            .map_err(|e| {
-                format!("Device failed to provide services: {e}")
-            })?
+            .map_err(|e| format!("Device failed to provide services: {e}"))?
             .into_iter()
             .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
             .ok_or_else(|| "Unable to find UART service".to_string())
@@ -288,6 +314,9 @@ pub enum Command {
     ReadHeartRate {
         timestamp: u32,
     },
+    ReadStress {
+        day_offset: u8,
+    },
     GetHeartRateSettings,
     SetHeartRateSettings {
         enabled: bool,
@@ -318,6 +347,10 @@ impl From<Command> for [u8; 16] {
             Command::ReadHeartRate { timestamp } => {
                 ret[0] = 21;
                 ret[1..5].copy_from_slice(&timestamp.to_le_bytes());
+            }
+            Command::ReadStress { day_offset } => {
+                ret[0] = 55;
+                ret[1] = day_offset;
             }
             Command::GetHeartRateSettings => {
                 ret[0..2].copy_from_slice(&[22, 1]);
@@ -364,7 +397,7 @@ impl From<Command> for [u8; 16] {
             }
             Command::BatteryInfo => {
                 ret[0] = 3;
-            },
+            }
             Command::Raw(mut bytes) => {
                 if bytes.len() > 15 {
                     log::warn!("truncating message longer than 15 bytes");
@@ -381,8 +414,14 @@ impl From<Command> for [u8; 16] {
 #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "command", content = "data", rename_all = "camelCase")]
 pub enum CommandReply {
-    BatteryInfo { level: u8, charging: bool },
-    HeartRateSettings { enabled: bool, interval: u8 },
+    BatteryInfo {
+        level: u8,
+        charging: bool,
+    },
+    HeartRateSettings {
+        enabled: bool,
+        interval: u8,
+    },
     SportDetail(Vec<SportDetail>),
     HeartRate(HeartRate),
     RealTimeData(RealTimeEvent),
@@ -391,6 +430,10 @@ pub enum CommandReply {
     Reboot,
     StopRealTime,
     SetHrSettings,
+    Stress {
+        time_interval_sec: u8,
+        measurements: Vec<u8>,
+    },
     Unknown(Vec<u8>),
 }
 
