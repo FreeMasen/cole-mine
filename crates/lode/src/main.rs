@@ -1,10 +1,10 @@
+use bleasy::BDAddr;
 use clap::{Parser, Subcommand};
 use cole_mine::{
     client::Client,
     client::{Command, CommandReply},
 };
 
-#[cfg(not(target_os = "macos"))]
 use cole_mine::BDAddr;
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -21,6 +21,9 @@ enum Commands {
         /// note: on MacOS addresses may be all zeros unless this is a signed .app
         #[arg(short = 'a', long = "all")]
         see_all: bool,
+    },
+    Goals {
+        addr: BDAddr,
     },
     /// Get the hardware and firmware information from a device
     DeviceDetails {
@@ -132,6 +135,9 @@ async fn main() -> Result {
     env_logger::init();
     match Commands::parse() {
         Commands::FindRings { see_all } => find_rings(see_all).await,
+        Commands::Goals { addr } => {
+            read_goals(addr).await
+        }
         Commands::DeviceDetails {
             #[cfg(target_os = "macos")]
             name,
@@ -317,6 +323,14 @@ async fn find_rings(see_all: bool) -> Result {
     while let Some(dev) = stream.next().await {
         println!("{}", dev.address());
     }
+    Ok(())
+}
+
+async fn read_goals(addr: BDAddr) -> Result {
+    let mut client = Client::new(addr).await?;
+    client.send(Command::Raw(vec![
+        0x21,0x01,0,0,0,0,0,0,0,0,0,0,0,0,0
+    ])).await?;
     Ok(())
 }
 

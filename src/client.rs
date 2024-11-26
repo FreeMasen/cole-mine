@@ -160,6 +160,10 @@ impl ClientReceiver {
                             log::debug!("StopRealTime reply");
                             CommandReply::StopRealTime
                         },
+                        188 => {
+                            log::debug!("BigData Reply: {ev:?}");
+                            CommandReply::Unknown(ev)
+                        }
                         _ => {
                             log::debug!("Unknown reply");
                             CommandReply::Unknown(ev)
