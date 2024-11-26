@@ -284,6 +284,12 @@ impl Client {
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
         let services = self.device.services().await?;
+        for service in &services {
+            println!("{}", service.uuid());
+            for char in service.characteristics() {
+                println!("  {}", char.uuid());
+            }
+        }
         let service = services
             .into_iter()
             .find(|s| s.uuid() == crate::DEVICE_INFO_UUID)

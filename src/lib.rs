@@ -6,6 +6,7 @@ use uuid::Uuid;
 type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 pub mod client;
+pub mod constants;
 pub mod heart_rate;
 pub mod sport_detail;
 pub mod stress;
