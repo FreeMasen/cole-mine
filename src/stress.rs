@@ -18,7 +18,7 @@ pub enum StressState {
 }
 
 impl StressState {
-    pub fn new(packet: [u8; 16]) -> Result<Self> {
+    pub fn new(packet: &[u8]) -> Result<Self> {
         if packet[0] == 55 {
             return Err(format!("Error parsing stress state {packet:?}").into());
         }
@@ -42,7 +42,7 @@ impl StressState {
         })
     }
 
-    pub fn step(&mut self, packet: [u8; 16]) -> Result {
+    pub fn step(&mut self, packet: &[u8]) -> Result {
         if packet[0] != 55 {
             return Err(format!("Invalid stress state packet: {packet:?}").into());
         }

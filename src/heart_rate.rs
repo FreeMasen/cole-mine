@@ -31,7 +31,7 @@ impl TryFrom<&[u8]> for HeartRateState {
     type Error = Box<dyn std::error::Error>;
 
     fn try_from(value: &[u8]) -> std::result::Result<Self, Self::Error> {
-        if value[0] == 255 {
+        if value[1] == 255 {
             return Ok(Self::Complete {
                 rates: Vec::new(),
                 date: OffsetDateTime::from_unix_timestamp(0)?,
@@ -43,22 +43,22 @@ impl TryFrom<&[u8]> for HeartRateState {
                 format!("Packet too short for heart rate data 15 < {}", value.len()).into(),
             );
         }
-        if value[0] != 0 {
+        if value[1] != 0 {
             return Err(format!(
                 "unexpected initial heart rate message expected 0 found {}",
-                value[0]
+                value[1]
             )
             .into());
         }
         Ok(Self::Length {
-            size: value[1].saturating_sub(1),
-            range: value[2],
+            size: value[2].saturating_sub(1),
+            range: value[3],
         })
     }
 }
 
 impl HeartRateState {
-    pub fn step(&mut self, packet: [u8; 16]) -> Result {
+    pub fn step(&mut self, packet: &[u8]) -> Result {
         *self = match self {
             HeartRateState::Length { size, range } => Self::step_length(*size, *range, packet)?,
             HeartRateState::Recieving {
@@ -77,7 +77,7 @@ impl HeartRateState {
         Ok(())
     }
 
-    fn step_length(size: u8, range: u8, packet: [u8; 16]) -> Result<Self> {
+    fn step_length(size: u8, range: u8, packet: &[u8]) -> Result<Self> {
         if packet[1] != 1 {
             return Err(format!(
                 "heart rate packet stream missing datetime packet found sub_type {}",
@@ -106,7 +106,7 @@ impl HeartRateState {
         range: u8,
         date: OffsetDateTime,
         mut rates: Vec<u8>,
-        packet: [u8; 16],
+        packet: &[u8],
     ) -> Result<Self> {
         if packet[1] == 0 {
             return Err("Unexpected size packet after date packet"
@@ -174,9 +174,9 @@ mod tests {
             .into_iter(),
         );
         let mut state =
-            HeartRateState::try_from(&packets.pop_front().unwrap().as_slice()[1..]).unwrap();
+            HeartRateState::try_from(packets.pop_front().unwrap().as_slice()).unwrap();
         for packet in packets {
-            state.step(packet).unwrap();
+            state.step(&packet[..packet.len() - 1]).unwrap();
         }
         let HeartRateState::Complete { range, rates, date } = state else {
             panic!("invalid state: {state:?}");

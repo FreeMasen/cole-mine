@@ -64,8 +64,7 @@ impl ClientReceiver {
                     let Some(tag) = ev.first() else {
                         continue;
                     };
-                    let mut packet = [0u8; 16];
-                    packet.copy_from_slice(&ev);
+                    
                     let cmd = match *tag {
                         1 => {
                             log::debug!("SetTime Reply");
@@ -90,7 +89,7 @@ impl ClientReceiver {
                             log::debug!("Heart Rate Reply");
                             if let Some(mut s) = partial_states.heart_rate_state.take() {
                                 log::debug!("Stepping heart rate state");
-                                if s.step(packet).is_err() {
+                                if s.step(&ev[..ev.len()-1]).is_err() {
                                     continue;
                                 }
                                 let HeartRateState::Complete { date, range, rates} = s else {
@@ -100,7 +99,8 @@ impl ClientReceiver {
                                 log::debug!("hear rate state complete");
                                 CommandReply::HeartRate(HeartRate { range, rates, date })
                             } else {
-                                match HeartRateState::try_from(&packet[1..]) {
+                                
+                                match HeartRateState::try_from(&ev[1..ev.len()-1]) {
                                     Ok(HeartRateState::Complete { date, range, rates}) => {
                                         CommandReply::HeartRate(HeartRate { range, rates, date })
                                     },
@@ -109,20 +109,20 @@ impl ClientReceiver {
                                         continue;
                                     },
                                     Err(e) => {
-                                        log::error!("failed to convert heart rate packet to state {packet:?}: {e}");
+                                        log::error!("failed to convert heart rate packet to state {ev:?}: {e}");
                                         CommandReply::Unknown(ev)
                                     }
                                 }
                             }
                         },
-                        22 if packet[2] == 1 || packet[2] == 2 => {
+                        22 if ev[2] == 1 || ev[2] == 2 => {
                             log::debug!("HeartRateSettings reply");
-                            CommandReply::HeartRateSettings { enabled: packet[2] == 1, interval: packet[3] }
+                            CommandReply::HeartRateSettings { enabled: ev[2] == 1, interval: ev[3] }
                         },
                         55 => {
                             log::debug!("Stress reply");
                             if let Some(mut ss) = partial_states.stress_state.take() {
-                                if ss.step(packet).is_err() {
+                                if ss.step(&ev).is_err() {
                                     continue;
                                 }
                                 let StressState::Complete { measurements, minutes_appart } = ss else {
@@ -134,14 +134,14 @@ impl ClientReceiver {
                                     measurements,
                                 }
                             } else {
-                                partial_states.stress_state = StressState::new(packet).ok();
+                                partial_states.stress_state = StressState::new(&ev).ok();
                                 continue;
                             }
                         }
                         67 => {
                             log::debug!("Sport Detail reply");
                             if let Some(mut ss) = partial_states.sport_detail.take() {
-                                if ss.step(packet).is_err() {
+                                if ss.step(&ev).is_err() {
                                     continue;
                                 }
                                 let SportDetailState::Complete { packets } = ss else {
@@ -150,18 +150,18 @@ impl ClientReceiver {
                                 };
                                 CommandReply::SportDetail(packets)
                             } else {
-                                partial_states.sport_detail = SportDetailState::new(packet).ok();
+                                partial_states.sport_detail = SportDetailState::new(&ev).ok();
                                 continue;
                             }
                         },
                         105 => {
                             log::debug!("RealTime Reply");
-                            let ev = if packet[2] != 0 {
-                                RealTimeEvent::Error(packet[2])
-                            } else if packet[1] == 1 {
-                                RealTimeEvent::HeartRate(packet[3])
+                            let ev = if ev[2] != 0 {
+                                RealTimeEvent::Error(ev[2])
+                            } else if ev[1] == 1 {
+                                RealTimeEvent::HeartRate(ev[3])
                             } else {
-                                RealTimeEvent::Oxygen(packet[3])
+                                RealTimeEvent::Oxygen(ev[3])
                             };
                             CommandReply::RealTimeData(ev)
                         }

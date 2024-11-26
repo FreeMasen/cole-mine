@@ -69,7 +69,7 @@ pub enum SportDetailState {
 }
 
 impl SportDetailState {
-    pub fn new(packet: [u8; 16]) -> Result<Self> {
+    pub fn new(packet: &[u8]) -> Result<Self> {
         if packet[0] != 67 {
             return Err(format!("Invalid prefix for sport detail state {}", packet[0]).into());
         }
@@ -85,11 +85,11 @@ impl SportDetailState {
         }
         Ok(Self::Recieving {
             new_cal_proto: false,
-            packets: vec![SportDetail::try_from(&packet[1..])?],
+            packets: vec![SportDetail::try_from(&packet[1..packet.len()-1])?],
         })
     }
 
-    pub fn step(&mut self, packet: [u8; 16]) -> Result {
+    pub fn step(&mut self, packet: &[u8]) -> Result {
         match self {
             Self::Initial { new_cal_proto } => {
                 let done = packet[5] == packet[6] - 1;
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn test_parse_simple() {
         let mut state =
-            SportDetailState::new(*b"C\xf0\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x005")
+            SportDetailState::new(&*b"C\xf0\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x005")
                 .unwrap();
         assert_eq!(
             state,
@@ -155,7 +155,7 @@ mod tests {
             }
         );
         state
-            .step(*b"C$\x10\x15\\\x00\x01y\x00\x15\x00\x10\x00\x00\x00\x87")
+            .step(&*b"C$\x10\x15\\\x00\x01y\x00\x15\x00\x10\x00\x00\x00\x87")
             .unwrap();
         assert_eq!(
             state,
@@ -188,9 +188,9 @@ mod tests {
             ]
             .into_iter(),
         );
-        let mut state = SportDetailState::new(packets.pop_front().unwrap()).unwrap();
+        let mut state = SportDetailState::new(&packets.pop_front().unwrap()).unwrap();
         for packet in packets {
-            state.step(packet).unwrap();
+            state.step(&packet).unwrap();
         }
         assert!(
             matches!(state, SportDetailState::Complete { .. }),
@@ -260,9 +260,9 @@ mod tests {
             },
         ];
 
-        let mut state = SportDetailState::new(packets.pop_front().unwrap()).unwrap();
+        let mut state = SportDetailState::new(&packets.pop_front().unwrap()).unwrap();
         for packet in packets {
-            state.step(packet).unwrap();
+            state.step(&packet).unwrap();
         }
         let SportDetailState::Complete { packets } = state else {
             panic!("Unexpected state: {state:?}");
@@ -273,7 +273,7 @@ mod tests {
     #[test]
     fn test_no_data_parse() {
         let resp = *b"C\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00B";
-        let state = SportDetailState::new(resp).unwrap();
+        let state = SportDetailState::new(&resp).unwrap();
         let SportDetailState::Complete { packets } = state else {
             panic!("Expected complete found {state:?}");
         };
