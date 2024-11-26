@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use bleasy::{Characteristic, Device, ScanConfig, Service};
+use bleasy::{Characteristic, Device, ScanConfig};
 use futures::{FutureExt, Stream, StreamExt};
 
 use crate::{
@@ -14,6 +14,7 @@ pub struct Client {
     device: Device,
     rx: Option<ClientReceiver>,
     tx: Characteristic,
+    tx2: Characteristic,
 }
 
 pub struct ClientReceiver(Pin<Box<dyn Stream<Item = CommandReply>>>);
@@ -33,9 +34,9 @@ impl ClientReceiver {
     pub async fn connect_device(device: &Device) -> Result<Self> {
         let mut streams = Vec::with_capacity(2);
         for s in device.services().await? {
-            if s.uuid() ==  crate::constants::UART_SERVICE_UUID {
+            if s.uuid() == crate::constants::UART_SERVICE_UUID {
                 for ch in s.characteristics() {
-                    if ch.uuid() == crate::UART_TX_CHAR_UUID {
+                    if ch.uuid() == crate::constants::UART_TX_CHAR_UUID {
                         streams.push(ch.subscribe().await?)
                     }
                 }
@@ -48,8 +49,10 @@ impl ClientReceiver {
                 }
             }
         }
-        
-        Ok(Self::from_stream(Box::pin(futures::stream::select_all(streams))))
+
+        Ok(Self::from_stream(Box::pin(futures::stream::select_all(
+            streams,
+        ))))
     }
 
     pub fn from_stream(mut stream: Pin<Box<dyn Stream<Item = Vec<u8>>>>) -> Self {
@@ -216,12 +219,13 @@ impl Client {
     }
 
     pub async fn with_device(device: Device) -> Result<Self> {
-        let tx = Self::find_uart_rx_characteristic(&device)
+        let (tx, tx2) = Self::find_tx_characteristics(&device)
             .await
             .map_err(|e| format!("Error looking up uart_rx characteristic: {e}"))?;
         Ok(Self {
             device,
             tx,
+            tx2,
             rx: None,
         })
     }
@@ -241,11 +245,15 @@ impl Client {
         log::trace!("sending {command:?}");
         let cmd_bytes: [u8; 16] = command.into();
         log::trace!("serialized: {cmd_bytes:?}");
-        Ok(self
+        if cmd_bytes[0] == crate::constants::CMD_BIG_DATA_V2 {
+            self.tx2.write_command(&cmd_bytes).await?;
+        } else {
+            self
             .tx
             .write_command(&cmd_bytes)
-            .await
-            .map_err(|e| format!("Failed to write command: {e}"))?)
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn read_next(&mut self) -> Result<Option<CommandReply>> {
@@ -267,25 +275,37 @@ impl Client {
             .await)
     }
 
-    async fn find_uart_rx_characteristic(device: &Device) -> Result<Characteristic> {
-        let service = Self::find_uart_service(device).await?;
-        let char = service
-            .characteristics()
-            .into_iter()
-            .find(|ch| ch.uuid() == crate::UART_RX_CHAR_UUID)
-            .ok_or_else(|| "Unable to find TX characteristic".to_string())?;
-        Ok(char)
-    }
-
-    async fn find_uart_service(device: &Device) -> Result<Service> {
-        Ok(device
-            .services()
-            .await
-            .map_err(|e| format!("Device failed to provide services: {e}"))?
-            .into_iter()
-            .find(|s| s.uuid() == crate::UART_SERVICE_UUID)
-            .ok_or_else(|| "Unable to find UART service".to_string())
-            .inspect(|_| log::trace!("Found UART service!"))?)
+    async fn find_tx_characteristics(device: &Device) -> Result<(Characteristic, Characteristic)> {
+        let mut one = None;
+        let mut two = None;
+        let services = device.services().await?;
+        'services: for service in services {
+            if one.is_some() && two.is_some() {
+                break;
+            }
+            if service.uuid() == crate::constants::UART_SERVICE_UUID {
+                for ch in service.characteristics() {
+                    if ch.uuid() == crate::constants::UART_RX_CHAR_UUID {
+                        one = Some(ch);
+                        continue 'services;
+                    }
+                }
+            }
+            if service.uuid() == crate::constants::CHARACTERISTIC_SERVICE_V2 {
+                for ch in service.characteristics() {
+                    if ch.uuid() == crate::constants::CHARACTERISTIC_COMMAND {
+                        two = Some(ch);
+                        continue 'services;
+                    }
+                }
+            }
+        }
+        match (one, two) {
+            (Some(one), Some(two)) => Ok((one, two)),
+            (Some(_), None) => Err("failed to find v2 characteristic".into()),
+            (None, Some(_)) => Err("failed to find uart characteristic".into()),
+            (None, None) => Err("no characteristics found".into()),
+        }
     }
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
@@ -298,16 +318,16 @@ impl Client {
         }
         let service = services
             .into_iter()
-            .find(|s| s.uuid() == crate::DEVICE_INFO_UUID)
+            .find(|s| s.uuid() == crate::constants::DEVICE_INFO_UUID)
             .ok_or_else(|| "Unable to find service with device info uuid".to_string())?;
         let mut ret = DeviceDetails::default();
         for ch in service.characteristics() {
-            if ch.uuid() == crate::DEVICE_HW_UUID {
+            if ch.uuid() == crate::constants::DEVICE_HW_UUID {
                 if let Ok(bytes) = ch.read().await {
                     ret.hw = String::from_utf8(bytes).ok()
                 }
             }
-            if ch.uuid() == crate::DEVICE_FW_UUID {
+            if ch.uuid() == crate::constants::DEVICE_FW_UUID {
                 if let Ok(bytes) = ch.read().await {
                     ret.fw = String::from_utf8(bytes).ok()
                 }

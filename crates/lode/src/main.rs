@@ -134,9 +134,7 @@ async fn main() -> Result {
     env_logger::init();
     match Commands::parse() {
         Commands::FindRings { see_all } => find_rings(see_all).await,
-        Commands::Goals { addr } => {
-            read_goals(addr).await
-        }
+        Commands::Goals { addr } => read_goals(addr).await,
         Commands::DeviceDetails {
             #[cfg(target_os = "macos")]
             name,
@@ -327,9 +325,11 @@ async fn find_rings(see_all: bool) -> Result {
 
 async fn read_goals(addr: BDAddr) -> Result {
     let mut client = Client::new(addr).await?;
-    client.send(Command::Raw(vec![
-        0x21,0x01,0,0,0,0,0,0,0,0,0,0,0,0,0
-    ])).await?;
+    client
+        .send(Command::Raw(vec![
+            0x21, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]))
+        .await?;
     Ok(())
 }
 
