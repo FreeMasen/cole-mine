@@ -1,9 +1,10 @@
 use uuid::Uuid;
-pub const CHARACTERISTIC_SERVICE_V1: Uuid = uuid::uuid!("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e");
+
+pub const UART_SERVICE_UUID: Uuid = uuid::uuid!("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e");
 pub const CHARACTERISTIC_SERVICE_V2: Uuid = uuid::uuid!("de5bf728-d711-4e47-af26-65e3012a5dc7");
-pub const CHARACTERISTIC_WRITE: Uuid = uuid::uuid!("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+pub const UART_RX_CHAR_UUID: Uuid = uuid::uuid!("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
 pub const CHARACTERISTIC_COMMAND: Uuid = uuid::uuid!("de5bf72a-d711-4e47-af26-65e3012a5dc7");
-pub const CHARACTERISTIC_NOTIFY_V1: Uuid = uuid::uuid!("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+pub const UART_TX_CHAR_UUID: Uuid = uuid::uuid!("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
 pub const CHARACTERISTIC_NOTIFY_V2: Uuid = uuid::uuid!("de5bf729-d711-4e47-af26-65e3012a5dc7");
 
 pub const CMD_SET_DATE_TIME: u8 = 0x01;

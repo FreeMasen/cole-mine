@@ -31,19 +31,25 @@ impl futures::Stream for ClientReceiver {
 
 impl ClientReceiver {
     pub async fn connect_device(device: &Device) -> Result<Self> {
-        let service = Client::find_uart_service(device)
-            .await
-            .map_err(|e| format!("Error finding UART service: {e}"))?;
-        let char = service
-            .characteristics()
-            .into_iter()
-            .find(|ch| ch.uuid() == crate::UART_TX_CHAR_UUID)
-            .ok_or_else(|| "Unable to find RX characteristic".to_string())?;
-        let incoming_stream = char
-            .subscribe()
-            .await
-            .map_err(|e| format!("Failed to subscribe to the tx char: {e}"))?;
-        Ok(Self::from_stream(incoming_stream))
+        let mut streams = Vec::with_capacity(2);
+        for s in device.services().await? {
+            if s.uuid() ==  crate::constants::UART_SERVICE_UUID {
+                for ch in s.characteristics() {
+                    if ch.uuid() == crate::UART_TX_CHAR_UUID {
+                        streams.push(ch.subscribe().await?)
+                    }
+                }
+            }
+            if s.uuid() == crate::constants::CHARACTERISTIC_SERVICE_V2 {
+                for ch in s.characteristics() {
+                    if ch.uuid() == crate::constants::CHARACTERISTIC_NOTIFY_V2 {
+                        streams.push(ch.subscribe().await?)
+                    }
+                }
+            }
+        }
+        
+        Ok(Self::from_stream(Box::pin(futures::stream::select_all(streams))))
     }
 
     pub fn from_stream(mut stream: Pin<Box<dyn Stream<Item = Vec<u8>>>>) -> Self {
