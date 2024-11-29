@@ -79,7 +79,7 @@ impl ClientReceiver {
                     };
                     let cmd = match ev {
                         RawPacket::Uart(ev) => {
-                            match ev[0] {
+                            match tag {
                                 1 => {
                                     log::debug!("SetTime Reply");
                                     CommandReply::SetTime
@@ -432,8 +432,7 @@ impl Client {
         let mut s = bleasy::Scanner::new();
         s.start(
             ScanConfig::default()
-                .filter_by_address(move |w| w == addr)
-                .stop_after_first_match(),
+                .filter_by_address(move |w| w == addr),
         )
         .await?;
         let device = s
