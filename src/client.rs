@@ -133,7 +133,7 @@ impl ClientReceiver {
                                     CommandReply::HeartRateSettings { enabled: ev[2] == 1, interval: ev[3] }
                                 },
                                 55 => {
-                                    log::debug!("Stress reply");
+                                    log::debug!("Stress reply {:?}", partial_states.stress_state);
                                     if let Some(mut ss) = partial_states.stress_state.take() {
                                         if ss.step(&ev.as_ref()).is_err() {
                                             continue;
@@ -660,8 +660,8 @@ impl From<Command> for [u8; 16] {
             Command::Raw(mut bytes) => {
                 if bytes.len() > 15 {
                     log::warn!("truncating message longer than 15 bytes");
-                    bytes.resize(16, 0);
                 }
+                bytes.resize(16, 0);
                 ret[0..15].copy_from_slice(&bytes[0..15]);
             }
         }
