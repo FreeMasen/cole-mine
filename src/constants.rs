@@ -42,7 +42,6 @@ pub const SLEEP_TYPE_DEEP: u8 = 0x03;
 pub const SLEEP_TYPE_REM: u8 = 0x04;
 pub const SLEEP_TYPE_AWAKE: u8 = 0x05;
 
-
 pub(crate) const DEVICE_INFO_UUID: Uuid = uuid::uuid!("0000180A-0000-1000-8000-00805F9B34FB");
 pub(crate) const DEVICE_HW_UUID: Uuid = uuid::uuid!("00002A27-0000-1000-8000-00805F9B34FB");
 pub(crate) const DEVICE_FW_UUID: Uuid = uuid::uuid!("00002A26-0000-1000-8000-00805F9B34FB");

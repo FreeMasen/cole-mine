@@ -173,8 +173,7 @@ mod tests {
             ]
             .into_iter(),
         );
-        let mut state =
-            HeartRateState::try_from(packets.pop_front().unwrap().as_slice()).unwrap();
+        let mut state = HeartRateState::try_from(packets.pop_front().unwrap().as_slice()).unwrap();
         for packet in packets {
             state.step(&packet[..packet.len() - 1]).unwrap();
         }

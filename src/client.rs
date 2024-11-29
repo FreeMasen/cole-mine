@@ -1,9 +1,16 @@
-use std::pin::Pin;
+use std::{
+    fmt::Display,
+    ops::{Index, Range, RangeTo},
+    pin::Pin,
+    time::Duration,
+};
 
 use bleasy::{Characteristic, Device, ScanConfig};
 use futures::{FutureExt, Stream, StreamExt};
+use time::{Date, OffsetDateTime, Time};
 
 use crate::{
+    constants,
     heart_rate::{HeartRate, HeartRateState},
     sport_detail::{SportDetail, SportDetailState},
     stress::StressState,
@@ -37,14 +44,20 @@ impl ClientReceiver {
             if s.uuid() == crate::constants::UART_SERVICE_UUID {
                 for ch in s.characteristics() {
                     if ch.uuid() == crate::constants::UART_TX_CHAR_UUID {
-                        streams.push(ch.subscribe().await?)
+                        let stream: Pin<Box<dyn Stream<Item = Vec<u8>>>> = ch.subscribe().await?;
+                        let stream: Pin<Box<dyn Stream<Item = RawPacket>>> =
+                            Box::pin(stream.map(RawPacket::Uart));
+                        streams.push(stream);
                     }
                 }
             }
             if s.uuid() == crate::constants::CHARACTERISTIC_SERVICE_V2 {
                 for ch in s.characteristics() {
                     if ch.uuid() == crate::constants::CHARACTERISTIC_NOTIFY_V2 {
-                        streams.push(ch.subscribe().await?)
+                        let stream: Pin<Box<dyn Stream<Item = Vec<u8>>>> = ch.subscribe().await?;
+                        let stream: Pin<Box<dyn Stream<Item = RawPacket>>> =
+                            Box::pin(stream.map(RawPacket::V2));
+                        streams.push(stream);
                     }
                 }
             }
@@ -55,128 +68,173 @@ impl ClientReceiver {
         ))))
     }
 
-    pub fn from_stream(mut stream: Pin<Box<dyn Stream<Item = Vec<u8>>>>) -> Self {
+    pub fn from_stream(mut stream: Pin<Box<dyn Stream<Item = RawPacket>>>) -> Self {
         ClientReceiver(
             async_stream::stream! {
                 let mut partial_states = MultiPacketStates::default();
                 while let Some(ev) = stream.next().await {
                     log::trace!("raw packet: {ev:?}");
-                    let Some(tag) = ev.first() else {
+                    let Some(tag) = ev.tag_byte().ok() else {
                         continue;
                     };
-                    
-                    let cmd = match *tag {
-                        1 => {
-                            log::debug!("SetTime Reply");
-                            CommandReply::SetTime
-                        },
-                        3 =>{
-                            log::debug!("Battery Info Reply {}, {}", ev[1], ev[2]);
-                            CommandReply::BatteryInfo {
-                                level: ev[1],
-                                charging: ev[2] > 0,
-                            }
-                        },
-                        8 => {
-                            log::debug!("Reboot Reply");
-                            CommandReply::Reboot
-                        },
-                        16 => {
-                            log::debug!("BlinkTwice Reply");
-                            CommandReply::BlinkTwice
-                        },
-                        21 => {
-                            log::debug!("Heart Rate Reply");
-                            if let Some(mut s) = partial_states.heart_rate_state.take() {
-                                log::debug!("Stepping heart rate state");
-                                if s.step(&ev[..ev.len()-1]).is_err() {
-                                    continue;
-                                }
-                                let HeartRateState::Complete { date, range, rates} = s else {
-                                    partial_states.heart_rate_state = Some(s);
-                                    continue;
-                                };
-                                log::debug!("hear rate state complete");
-                                CommandReply::HeartRate(HeartRate { range, rates, date })
-                            } else {
-                                
-                                match HeartRateState::try_from(&ev[1..ev.len()-1]) {
-                                    Ok(HeartRateState::Complete { date, range, rates}) => {
+                    let cmd = match ev {
+                        RawPacket::Uart(ev) => {
+                            match ev[0] {
+                                1 => {
+                                    log::debug!("SetTime Reply");
+                                    CommandReply::SetTime
+                                },
+                                3 =>{
+                                    log::debug!("Battery Info Reply {}, {}", ev[1], ev[2]);
+                                    CommandReply::BatteryInfo {
+                                        level: ev[1],
+                                        charging: ev[2] > 0,
+                                    }
+                                },
+                                8 => {
+                                    log::debug!("Reboot Reply");
+                                    CommandReply::Reboot
+                                },
+                                16 => {
+                                    log::debug!("BlinkTwice Reply");
+                                    CommandReply::BlinkTwice
+                                },
+                                21 => {
+                                    log::debug!("Heart Rate Reply");
+                                    if let Some(mut s) = partial_states.heart_rate_state.take() {
+                                        log::debug!("Stepping heart rate state");
+                                        if s.step(&ev[..ev.len()-1]).is_err() {
+                                            continue;
+                                        }
+                                        let HeartRateState::Complete { date, range, rates} = s else {
+                                            partial_states.heart_rate_state = Some(s);
+                                            continue;
+                                        };
+                                        log::debug!("hear rate state complete");
                                         CommandReply::HeartRate(HeartRate { range, rates, date })
-                                    },
-                                    Ok(other) => {
-                                        partial_states.heart_rate_state = Some(other);
+                                    } else {
+                                        match HeartRateState::try_from(&ev[1..ev.len()-1]) {
+                                            Ok(HeartRateState::Complete { date, range, rates}) => {
+                                                CommandReply::HeartRate(HeartRate { range, rates, date })
+                                            },
+                                            Ok(other) => {
+                                                partial_states.heart_rate_state = Some(other);
+                                                continue;
+                                            },
+                                            Err(e) => {
+                                                log::error!("failed to convert heart rate packet to state {ev:?}: {e}");
+                                                CommandReply::Unknown(ev)
+                                            }
+                                        }
+                                    }
+                                },
+                                22 if ev[2] == 1 || ev[2] == 2 => {
+                                    log::debug!("HeartRateSettings reply");
+                                    CommandReply::HeartRateSettings { enabled: ev[2] == 1, interval: ev[3] }
+                                },
+                                55 => {
+                                    log::debug!("Stress reply");
+                                    if let Some(mut ss) = partial_states.stress_state.take() {
+                                        if ss.step(&ev.as_ref()).is_err() {
+                                            continue;
+                                        }
+                                        let StressState::Complete { measurements, minutes_appart } = ss else {
+                                            partial_states.stress_state = Some(ss);
+                                            continue;
+                                        };
+                                        CommandReply::Stress {
+                                            time_interval_sec: minutes_appart,
+                                            measurements,
+                                        }
+                                    } else {
+                                        partial_states.stress_state = StressState::new(&ev.as_ref()).ok();
                                         continue;
-                                    },
-                                    Err(e) => {
-                                        log::error!("failed to convert heart rate packet to state {ev:?}: {e}");
-                                        CommandReply::Unknown(ev)
                                     }
                                 }
+                                67 => {
+                                    log::debug!("Sport Detail reply");
+                                    if let Some(mut ss) = partial_states.sport_detail.take() {
+                                        if ss.step(ev.as_ref()).is_err() {
+                                            continue;
+                                        }
+                                        let SportDetailState::Complete { packets } = ss else {
+                                            partial_states.sport_detail = Some(ss);
+                                            continue;
+                                        };
+                                        CommandReply::SportDetail(packets)
+                                    } else {
+                                        partial_states.sport_detail = SportDetailState::new(ev.as_ref()).ok();
+                                        continue;
+                                    }
+                                },
+                                105 => {
+                                    log::debug!("RealTime Reply");
+                                    let ev = if ev[2] != 0 {
+                                        RealTimeEvent::Error(ev[2])
+                                    } else if ev[1] == 1 {
+                                        RealTimeEvent::HeartRate(ev[3])
+                                    } else {
+                                        RealTimeEvent::Oxygen(ev[3])
+                                    };
+                                    CommandReply::RealTimeData(ev)
+                                }
+                                106 => {
+                                    log::debug!("StopRealTime reply");
+                                    CommandReply::StopRealTime
+                                },
+                                _ => {
+                                    log::debug!("Unknown reply");
+                                    CommandReply::Unknown(ev)
+                                },
                             }
                         },
-                        22 if ev[2] == 1 || ev[2] == 2 => {
-                            log::debug!("HeartRateSettings reply");
-                            CommandReply::HeartRateSettings { enabled: ev[2] == 1, interval: ev[3] }
-                        },
-                        55 => {
-                            log::debug!("Stress reply");
-                            if let Some(mut ss) = partial_states.stress_state.take() {
-                                if ss.step(&ev).is_err() {
-                                    continue;
-                                }
-                                let StressState::Complete { measurements, minutes_appart } = ss else {
-                                    partial_states.stress_state = Some(ss);
-                                    continue;
-                                };
-                                CommandReply::Stress {
-                                    time_interval_sec: minutes_appart,
-                                    measurements,
-                                }
-                            } else {
-                                partial_states.stress_state = StressState::new(&ev).ok();
-                                continue;
+                        RawPacket::V2(ev) => {
+                            match ev[0] {
+                                constants::CMD_BIG_DATA_V2 => {
+                                    log::debug!("BigData Reply: {ev:?}");
+                                    if let Some(mut ss) = partial_states.partial_big_data.take() {
+                                        if ss.step(ev.as_ref()).is_err() {
+                                            continue;
+                                        }
+                                        ss.step(&ev).ok();
+                                        if let BigDataState::Complete(packet) = ss {
+                                            match SleepData::try_from(packet) {
+                                                Ok(p) => CommandReply::Sleep(p),
+                                                Err(e) => {
+                                                    eprintln!("error converting big sleep: {e}");
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            partial_states.partial_big_data = Some(ss);
+                                            continue;
+                                        }
+                                    } else {
+                                        match ev[1] {
+                                            constants::BIG_DATA_TYPE_SLEEP | constants::BIG_DATA_TYPE_SPO2
+                                             => {
+                                                let Ok(state) = BigDataState::new(&ev) else {
+                                                    continue;
+                                                };
+                                                if let BigDataState::Complete(packet) = state {
+                                                    match SleepData::try_from(packet) {
+                                                        Ok(p) => CommandReply::Sleep(p),
+                                                        Err(e) => {
+                                                            eprintln!("error converting big sleep: {e}");
+                                                            continue;
+                                                        }
+                                                    }
+                                                } else {
+                                                    continue;
+                                                }
+                                            },
+                                            _ => CommandReply::Unknown(ev),
+                                        }
+                                    }
+                                },
+                                _ => continue,
                             }
                         }
-                        67 => {
-                            log::debug!("Sport Detail reply");
-                            if let Some(mut ss) = partial_states.sport_detail.take() {
-                                if ss.step(&ev).is_err() {
-                                    continue;
-                                }
-                                let SportDetailState::Complete { packets } = ss else {
-                                    partial_states.sport_detail = Some(ss);
-                                    continue;
-                                };
-                                CommandReply::SportDetail(packets)
-                            } else {
-                                partial_states.sport_detail = SportDetailState::new(&ev).ok();
-                                continue;
-                            }
-                        },
-                        105 => {
-                            log::debug!("RealTime Reply");
-                            let ev = if ev[2] != 0 {
-                                RealTimeEvent::Error(ev[2])
-                            } else if ev[1] == 1 {
-                                RealTimeEvent::HeartRate(ev[3])
-                            } else {
-                                RealTimeEvent::Oxygen(ev[3])
-                            };
-                            CommandReply::RealTimeData(ev)
-                        }
-                        106 => {
-                            log::debug!("StopRealTime reply");
-                            CommandReply::StopRealTime
-                        },
-                        188 => {
-                            log::debug!("BigData Reply: {ev:?}");
-                            CommandReply::Unknown(ev)
-                        }
-                        _ => {
-                            log::debug!("Unknown reply");
-                            CommandReply::Unknown(ev)
-                        },
                     };
                     yield cmd;
                 }
@@ -198,6 +256,174 @@ pub struct MultiPacketStates {
     sport_detail: Option<SportDetailState>,
     heart_rate_state: Option<HeartRateState>,
     stress_state: Option<StressState>,
+    partial_big_data: Option<BigDataState>,
+}
+
+#[derive(Debug)]
+pub enum BigDataState {
+    Partial {
+        target_length: usize,
+        packet: BigDataPacket,
+    },
+    Complete(BigDataPacket),
+}
+
+#[derive(Debug, Clone)]
+pub enum BigDataPacket {
+    Sleep(Vec<u8>),
+    Oxygen(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SleepData {
+    sessions: Vec<SleepSession>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SleepSession {
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    stages: Vec<SleepStage>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum SleepStage {
+    Light(u8),
+    Deep(u8),
+    Rem(u8),
+    Awake(u8),
+}
+
+impl TryFrom<BigDataPacket> for SleepData {
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(value: BigDataPacket) -> std::result::Result<Self, Self::Error> {
+        let BigDataPacket::Sleep(data) = value else {
+            return Err(format!("Invlaid big data packet for sleep: {value:?}").into());
+        };
+        let days = data.get(0).copied().unwrap_or_default();
+        let mut sessions = Vec::with_capacity(days as _);
+        fn too_short_error(idx: u8, msg: impl Display) -> impl Fn() -> Box<dyn std::error::Error> {
+            move || -> Box<dyn std::error::Error + 'static> {
+                format!("Packet too short at {idx}: {msg}").into()
+            }
+        }
+
+        let mut iter = data[1..].iter().copied();
+        let today = OffsetDateTime::now_utc().date();
+        for i in 1..days {
+            let days_ago = iter.next().ok_or_else(too_short_error(i, "days ago"))?;
+            let day = today - Duration::days(days_ago as _);
+            let day_bytes = iter.next().ok_or_else(too_short_error(i, "day bytes"))?;
+            let start = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "start"))?;
+            let end = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "end"))?;
+            let start = if start > end {
+                day.midnight().assume_utc() + Duration::minutes(start as _)
+            } else {
+                day.previous_day()
+                    .ok_or_else(|| format!("Invalid day"))?
+                    .midnight()
+                    .assume_utc()
+                    + Duration::minutes(start as _)
+            };
+            let end = day.midnight().assume_utc() + Duration::minutes(end as _);
+            let mut stages = Vec::new();
+            for j in 4..(day_bytes / 2) {
+                let stage = iter
+                    .next()
+                    .ok_or_else(too_short_error(i, &format!("{j} stage")))?;
+                let minutes = iter
+                    .next()
+                    .ok_or_else(too_short_error(i, &format!("{j} minutes")))?;
+                stages.push(match stage {
+                    constants::SLEEP_TYPE_LIGHT => SleepStage::Light(minutes),
+                    constants::SLEEP_TYPE_DEEP => SleepStage::Deep(minutes),
+                    constants::SLEEP_TYPE_REM => SleepStage::Rem(minutes),
+                    constants::SLEEP_TYPE_AWAKE => SleepStage::Awake(minutes),
+                    _ => return Err(format!("{i}/{j} sleep sample type invalid {stage}").into()),
+                });
+            }
+            sessions.push(SleepSession { start, end, stages })
+        }
+        Ok(Self { sessions })
+    }
+}
+
+impl BigDataState {
+    fn new(bytes: &[u8]) -> Result<Self> {
+        if bytes[0] != crate::constants::CMD_BIG_DATA_V2 {
+            return Err(format!("Invalid bytes for bigdata state: {bytes:?}").into());
+        }
+        println!("with bytes {}", bytes.len());
+        let target_length = try_u16_from_le_slice(&bytes[2..4]).unwrap() as usize;
+        let data = Vec::with_capacity(target_length);
+        let tag = bytes[1];
+        let mut ret = Self::Partial {
+            target_length,
+            packet: if tag == constants::BIG_DATA_TYPE_SLEEP {
+                BigDataPacket::Sleep(data)
+            } else if bytes[1] == constants::BIG_DATA_TYPE_SPO2 {
+                BigDataPacket::Oxygen(data)
+            } else {
+                panic!("Unknown big data type: {bytes:?}")
+            },
+        };
+        ret.step(&bytes[6..])?;
+        Ok(ret)
+    }
+
+    fn step(&mut self, bytes: &[u8]) -> Result {
+        let Self::Partial {
+            target_length,
+            packet,
+        } = self
+        else {
+            return Err("step after complete".into());
+        };
+        packet.extend_from_slice(bytes);
+        if packet.len() == *target_length {
+            *self = Self::Complete(packet.clone());
+        }
+        Ok(())
+    }
+}
+
+impl BigDataPacket {
+    fn extend_from_slice(&mut self, slice: &[u8]) {
+        self.get_data_mut().extend_from_slice(slice);
+    }
+
+    fn len(&self) -> usize {
+        self.get_data_ref().len()
+    }
+
+    fn capacity(&self) -> usize {
+        self.get_data_ref().capacity()
+    }
+
+    fn get_data_ref(&self) -> &Vec<u8> {
+        match self {
+            Self::Oxygen(data) | Self::Sleep(data) => data,
+        }
+    }
+
+    fn get_data_mut(&mut self) -> &mut Vec<u8> {
+        match self {
+            Self::Oxygen(data) | Self::Sleep(data) => data,
+        }
+    }
+}
+
+fn try_u16_from_le_slice(slice: &[u8]) -> Option<u16> {
+    let mut bytes = [0u8; 2];
+    bytes.copy_from_slice(&slice.get(0..2)?);
+    Some(u16::from_le_bytes(bytes))
+}
+
+fn try_u16_from_iter(slice: &mut dyn Iterator<Item = u8>) -> Option<u16> {
+    let mut bytes = [0u8; 2];
+    bytes[0] = slice.next()?;
+    bytes[1] = slice.next()?;
+    Some(u16::from_le_bytes(bytes))
 }
 
 impl Client {
@@ -248,10 +474,7 @@ impl Client {
         if cmd_bytes[0] == crate::constants::CMD_BIG_DATA_V2 {
             self.tx2.write_command(&cmd_bytes).await?;
         } else {
-            self
-            .tx
-            .write_command(&cmd_bytes)
-            .await?;
+            self.tx.write_command(&cmd_bytes).await?;
         }
         Ok(())
     }
@@ -470,6 +693,7 @@ pub enum CommandReply {
         time_interval_sec: u8,
         measurements: Vec<u8>,
     },
+    Sleep(SleepData),
     Unknown(Vec<u8>),
 }
 
@@ -487,8 +711,91 @@ fn checksum(packet: &[u8]) -> u8 {
     trunc as u8
 }
 
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum RawPacket {
+    Uart(Vec<u8>),
+    V2(Vec<u8>),
+}
+
+impl Index<usize> for RawPacket {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.index(index),
+        }
+    }
+}
+
+impl Index<Range<usize>> for RawPacket {
+    type Output = [u8];
+
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.index(index),
+        }
+    }
+}
+
+impl Index<RangeTo<usize>> for RawPacket {
+    type Output = [u8];
+
+    fn index(&self, index: RangeTo<usize>) -> &Self::Output {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.index(index),
+        }
+    }
+}
+
+impl AsRef<[u8]> for RawPacket {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Uart(vec) | Self::V2(vec) => vec.as_ref(),
+        }
+    }
+}
+
+impl RawPacket {
+    pub fn tag_byte(&self) -> Result<u8> {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.first(),
+        }
+        .copied()
+        .ok_or_else(|| "0 sized packet".into())
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.len(),
+        }
+    }
+}
+
+pub trait DurationExt {
+    fn minutes(value: u64) -> Duration;
+    fn hours(value: u64) -> Duration;
+    fn days(value: u64) -> Duration;
+}
+
+impl DurationExt for Duration {
+    fn minutes(value: u64) -> Duration {
+        Duration::from_secs(value * 60)
+    }
+
+    fn hours(value: u64) -> Duration {
+        Duration::minutes(value * 60)
+    }
+
+    fn days(value: u64) -> Duration {
+        Duration::hours(value * 24)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    use std::collections::VecDeque;
 
     use super::*;
 
@@ -535,10 +842,9 @@ mod tests {
         let mut packet = [0u8; 16];
         packet[0] = 3;
         packet[1] = 1;
-        let mut rx =
-            ClientReceiver::from_stream(Box::pin(futures::stream::once(
-                async move { packet.to_vec() },
-            )));
+        let mut rx = ClientReceiver::from_stream(Box::pin(futures::stream::once(async move {
+            RawPacket::Uart(packet.to_vec())
+        })));
         let parsed = rx.next().await.unwrap();
         assert_eq!(parsed, expected);
     }
@@ -554,10 +860,9 @@ mod tests {
         packet[0] = 3;
         packet[1] = 2;
         packet[2] = 1;
-        let mut rx =
-            ClientReceiver::from_stream(Box::pin(futures::stream::once(
-                async move { packet.to_vec() },
-            )));
+        let mut rx = ClientReceiver::from_stream(Box::pin(futures::stream::once(async move {
+            RawPacket::Uart(packet.to_vec())
+        })));
         let parsed = rx.next().await.unwrap();
         assert_eq!(parsed, expected);
     }
@@ -568,7 +873,7 @@ mod tests {
             enabled: false,
             interval: 0,
         };
-        let stream = futures::stream::iter([make_packet(&[22, 0, 2])]);
+        let stream = futures::stream::iter([RawPacket::Uart(make_packet(&[22, 0, 2]))]);
         let mut rx = ClientReceiver::from_stream(Box::pin(stream));
         let parsed = rx.next().await.unwrap();
         assert_eq!(parsed, expected);
@@ -580,10 +885,49 @@ mod tests {
             enabled: true,
             interval: 127,
         };
-        let stream = futures::stream::iter([make_packet(&[22, 0, 1, 127])]);
+        let stream = futures::stream::iter([RawPacket::Uart(make_packet(&[22, 0, 1, 127]))]);
         let mut rx = ClientReceiver::from_stream(Box::pin(stream));
         let parsed = rx.next().await.unwrap();
         assert_eq!(parsed, expected);
+    }
+
+    #[tokio::test]
+    async fn big_data_sleep() {
+        let mut packets = VecDeque::from_iter([
+            [
+                188, 39, 71, 0, 202, 141, 2, 2, 26, 177, 0, 11, 2, 2, 67, 3, 35, 2, 15, 4,
+            ]
+            .to_vec(),
+            [
+                34, 2, 95, 3, 16, 2, 1, 5, 13, 2, 49, 3, 18, 2, 3, 0, 40, 9, 0, 224,
+            ]
+            .to_vec(),
+            [
+                1, 2, 61, 3, 31, 2, 15, 4, 33, 3, 31, 2, 31, 4, 34, 3, 33, 2, 17, 4,
+            ]
+            .to_vec(),
+            [15, 2, 10, 0, 1, 2, 29, 5, 6, 2, 55, 5, 12, 2, 50, 2, 7].to_vec(),
+        ]);
+        let initial = packets.pop_front().unwrap();
+        let mut state = BigDataState::new(&initial).unwrap();
+        for packet in packets {
+            state.step(packet.as_slice()).unwrap();
+        }
+        let packet = match state {
+            BigDataState::Complete(packet) => packet,
+            BigDataState::Partial {
+                target_length,
+                packet,
+            } => {
+                panic!(
+                    "Expected complete, found {target_length} {}/{}",
+                    packet.len(),
+                    packet.capacity()
+                );
+            }
+        };
+        let sleep_data: SleepData = packet.try_into().unwrap();
+        insta::assert_debug_snapshot!(sleep_data);
     }
 
     fn make_packet(bytes: &[u8]) -> Vec<u8> {

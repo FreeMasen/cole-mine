@@ -85,7 +85,7 @@ impl SportDetailState {
         }
         Ok(Self::Recieving {
             new_cal_proto: false,
-            packets: vec![SportDetail::try_from(&packet[1..packet.len()-1])?],
+            packets: vec![SportDetail::try_from(&packet[1..packet.len() - 1])?],
         })
     }
 

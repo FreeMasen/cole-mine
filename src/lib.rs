@@ -16,7 +16,11 @@ pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> 
     log::trace!("discover({all})");
     let mut config = ScanConfig::default();
     if !all {
-        config = config.filter_by_name(|n| crate::constants::DEVICE_NAME_PREFIXES.iter().any(|p| n.starts_with(*p)));
+        config = config.filter_by_name(|n| {
+            crate::constants::DEVICE_NAME_PREFIXES
+                .iter()
+                .any(|p| n.starts_with(*p))
+        });
     }
     discover_(config).await
 }
