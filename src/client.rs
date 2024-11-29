@@ -189,9 +189,9 @@ impl ClientReceiver {
                             }
                         },
                         RawPacket::V2(ev) => {
-                            log::trace("V2 Packet");
+                            log::trace!("V2 Packet");
                             if tag == constants::CMD_BIG_DATA_V2 {
-                                log::trace("Big Data tag");
+                                log::trace!("Big Data tag");
                                 if !(ev[1] == constants::BIG_DATA_TYPE_SLEEP || ev[1] == constants::BIG_DATA_TYPE_SPO2) {
                                     log::warn!("Ignoring unknown big data packet {ev:?}");
                                     continue;
