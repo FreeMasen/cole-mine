@@ -1,0 +1,206 @@
+---
+source: src/client.rs
+expression: sleep_data
+---
+SleepData {
+    sessions: [
+        SleepSession {
+            start: 2024-11-22 2:57:00.0 +00:00:00,
+            end: 2024-11-23 8:43:00.0 +00:00:00,
+            stages: [
+                Light(
+                    67,
+                ),
+                Deep(
+                    35,
+                ),
+                Light(
+                    15,
+                ),
+                Rem(
+                    34,
+                ),
+                Light(
+                    95,
+                ),
+                Deep(
+                    16,
+                ),
+                Light(
+                    1,
+                ),
+                Awake(
+                    13,
+                ),
+                Light(
+                    49,
+                ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    3,
+                ),
+            ],
+        },
+        SleepSession {
+            start: 2024-11-24 0:09:00.0 +00:00:00,
+            end: 2024-11-25 8:00:00.0 +00:00:00,
+            stages: [
+                Light(
+                    61,
+                ),
+                Deep(
+                    31,
+                ),
+                Light(
+                    15,
+                ),
+                Rem(
+                    33,
+                ),
+                Deep(
+                    31,
+                ),
+                Light(
+                    31,
+                ),
+                Rem(
+                    34,
+                ),
+                Deep(
+                    33,
+                ),
+                Light(
+                    17,
+                ),
+                Rem(
+                    15,
+                ),
+                Light(
+                    10,
+                ),
+                Light(
+                    29,
+                ),
+                Awake(
+                    6,
+                ),
+                Light(
+                    55,
+                ),
+                Awake(
+                    12,
+                ),
+                Light(
+                    50,
+                ),
+                Light(
+                    7,
+                ),
+            ],
+        },
+        SleepSession {
+            start: 2024-11-25 0:00:00.0 +00:00:00,
+            end: 2024-11-26 8:27:00.0 +00:00:00,
+            stages: [
+                Light(
+                    73,
+                ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    18,
+                ),
+                Rem(
+                    31,
+                ),
+                Deep(
+                    33,
+                ),
+                Light(
+                    31,
+                ),
+                Rem(
+                    33,
+                ),
+                Light(
+                    16,
+                ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    15,
+                ),
+                Rem(
+                    17,
+                ),
+                Light(
+                    34,
+                ),
+                Deep(
+                    33,
+                ),
+                Light(
+                    137,
+                ),
+            ],
+        },
+        SleepSession {
+            start: 2024-11-27 23:59:00.0 +00:00:00,
+            end: 2024-11-27 8:36:00.0 +00:00:00,
+            stages: [
+                Light(
+                    71,
+                ),
+                Deep(
+                    16,
+                ),
+                Light(
+                    35,
+                ),
+                Rem(
+                    18,
+                ),
+                Deep(
+                    34,
+                ),
+                Light(
+                    30,
+                ),
+                Rem(
+                    33,
+                ),
+                Light(
+                    101,
+                ),
+                Deep(
+                    32,
+                ),
+                Light(
+                    17,
+                ),
+                Rem(
+                    15,
+                ),
+                Light(
+                    32,
+                ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    29,
+                ),
+                Awake(
+                    13,
+                ),
+                Light(
+                    23,
+                ),
+            ],
+        },
+    ],
+}

@@ -7,7 +7,7 @@ use std::{
 
 use bleasy::{Characteristic, Device, ScanConfig};
 use futures::{FutureExt, Stream, StreamExt};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::{
     constants,
@@ -351,6 +351,8 @@ impl TryFrom<BigDataPacket> for SleepData {
             return Err(format!("Invlaid big data packet for sleep: {value:?}").into());
         };
         let days = data.get(0).copied().unwrap_or_default();
+        log::debug!("trying to parse sleep data with {days} days");
+        log::trace!("{:?}", data);
         let mut sessions = Vec::with_capacity(days as _);
         fn too_short_error(idx: u8, msg: impl Display) -> impl Fn() -> Box<dyn std::error::Error> {
             move || -> Box<dyn std::error::Error + 'static> {
@@ -362,8 +364,11 @@ impl TryFrom<BigDataPacket> for SleepData {
         let today = OffsetDateTime::now_utc().date();
         for i in 1..days {
             let days_ago = iter.next().ok_or_else(too_short_error(i, "days ago"))?;
+            log::trace!("handling day {days_ago} days in the past");
             let day = today - Duration::days(days_ago as _);
+            log::trace!("{day:?}");
             let day_bytes = iter.next().ok_or_else(too_short_error(i, "day bytes"))?;
+            log::trace!("day bytes: {day_bytes}");
             let start = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "start"))?;
             let end = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "end"))?;
             let start = if start > end {
@@ -376,20 +381,32 @@ impl TryFrom<BigDataPacket> for SleepData {
                     + Duration::minutes(start as _)
             };
             let end = day.midnight().assume_utc() + Duration::minutes(end as _);
+            log::debug!(
+                "sleep session {:?}-{:?}",
+                start.to_offset(UtcOffset::from_hms(-6, 0, 0).unwrap()),
+                end.to_offset(UtcOffset::from_hms(-6, 0, 0).unwrap())
+            );
             let mut stages = Vec::new();
-            for j in 4..(day_bytes / 2) {
+            let mut remaining_bytes = day_bytes - 4;
+            while remaining_bytes > 0 {
                 let stage = iter
                     .next()
-                    .ok_or_else(too_short_error(i, &format!("{j} stage")))?;
+                    .ok_or_else(too_short_error(i, &format!("{remaining_bytes} stage")))?;
                 let minutes = iter
                     .next()
-                    .ok_or_else(too_short_error(i, &format!("{j} minutes")))?;
+                    .ok_or_else(too_short_error(i, &format!("{remaining_bytes} minutes")))?;
+                log::debug!("{stage}-{minutes}");
+                remaining_bytes -= 2;
                 stages.push(match stage {
+                    0 => {
+                        log::warn!("empty sleep stage");
+                        continue;
+                    }
                     constants::SLEEP_TYPE_LIGHT => SleepStage::Light(minutes),
                     constants::SLEEP_TYPE_DEEP => SleepStage::Deep(minutes),
                     constants::SLEEP_TYPE_REM => SleepStage::Rem(minutes),
                     constants::SLEEP_TYPE_AWAKE => SleepStage::Awake(minutes),
-                    _ => return Err(format!("{i}/{j} sleep sample type invalid {stage}").into()),
+                    _ => return Err(format!("{i}/{remaining_bytes} sleep sample type invalid {stage}").into()),
                 });
             }
             sessions.push(SleepSession { start, end, stages })
@@ -480,11 +497,8 @@ impl Client {
     pub async fn new(addr: impl Into<bleasy::BDAddr>) -> Result<Self> {
         let addr = addr.into();
         let mut s = bleasy::Scanner::new();
-        s.start(
-            ScanConfig::default()
-                .filter_by_address(move |w| w == addr),
-        )
-        .await?;
+        s.start(ScanConfig::default().filter_by_address(move |w| w == addr))
+            .await?;
         let device = s
             .device_stream()
             .next()
@@ -976,6 +990,25 @@ mod tests {
             }
         };
         let sleep_data: SleepData = packet.try_into().unwrap();
+        insta::assert_debug_snapshot!(sleep_data);
+    }
+
+    #[tokio::test]
+    async fn big_data_sleep2() {
+        env_logger::builder().is_test(true).try_init().ok();
+        let packet = vec![
+            5u8, 6, 26, 
+            177, 0, 11, 2, 
+            2, 67, 3, 35, 2, 15, 4, 34, 2, 95, 3, 16, 2, 1, 5, 13, 2, 49, 3, 18, 2, 3, 
+            4, 40, 9, 0, 224, 1, 2, 
+            61, 3, 31, 2, 15, 4, 33, 3, 31, 2, 31, 4, 34,
+            3, 33, 2, 17, 4, 15, 2, 10, 0, 1, 2, 29, 5, 6, 2, 55, 5, 12, 2, 50, 2, 7, 3, 32, 0, 0,
+            251, 1, 2, 73, 3, 18, 2, 18, 4, 31, 3, 33, 2, 31, 4, 33, 2, 16, 3, 18, 2, 15, 4, 17, 2,
+            34, 3, 33, 2, 137, 2, 36, 159, 5, 4, 2, 2, 71, 3, 16, 2, 35, 4, 18, 3, 34, 2, 30, 4,
+            33, 2, 101, 3, 32, 2, 17, 4, 15, 2, 32, 3, 18, 2, 29, 5, 13, 2, 23, 1, 12, 66, 0, 214,
+            0, 2, 72, 3, 30, 2, 17, 4, 29,
+        ];
+        let sleep_data: SleepData = BigDataPacket::Sleep(packet).try_into().unwrap();
         insta::assert_debug_snapshot!(sleep_data);
     }
 

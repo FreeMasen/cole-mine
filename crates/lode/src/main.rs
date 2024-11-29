@@ -316,6 +316,7 @@ async fn send_command(cmd: SendCommand) -> Result {
 
 async fn find_rings(see_all: bool) -> Result {
     use futures::StreamExt;
+    log::info!("Finding rings");
     let mut stream = cole_mine::discover(see_all).await?;
     while let Some(dev) = stream.next().await {
         println!("{}", dev.address());
@@ -324,6 +325,7 @@ async fn find_rings(see_all: bool) -> Result {
 }
 
 async fn read_goals(addr: BDAddr) -> Result {
+    log::info!("reading goals");
     let mut client = Client::new(addr).await?;
     client
         .send(Command::Raw(vec![
@@ -367,6 +369,7 @@ async fn set_time_(
     years: Option<isize>,
     chinese: bool,
 ) -> Result {
+    log::info!("setting time");
     const MINUTE: u64 = 60;
     const HOUR: u64 = MINUTE * 60;
     const DAY: u64 = HOUR * 24;
@@ -434,6 +437,7 @@ async fn get_device_details(addr: BDAddr) -> Result {
 }
 
 async fn get_device_details_(client: &mut Client) -> Result {
+    log::info!("getting device details");
     let details = client.device_details().await?;
     println!(
         "Hardware: {}",
@@ -465,6 +469,7 @@ async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
     read_sport_details_(&mut client, day_offset).await
 }
 async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
+    log::info!("getting sport details");
     client.connect().await?;
     client.send(Command::ReadSportDetail { day_offset }).await?;
     while let Ok(Ok(Some(event))) =
@@ -505,6 +510,7 @@ async fn read_heart_rate(addr: BDAddr, date: time::Date) -> Result {
     read_heart_rate_(&mut client, date).await
 }
 async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
+    log::info!("getting hear rate");
     let target = date.midnight().assume_utc();
     let timestamp = target.unix_timestamp();
     client.connect().await?;
@@ -571,6 +577,7 @@ async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
 }
 
 async fn read_battery_info_(client: &mut Client) -> Result {
+    log::info!("getting battery info");
     client.connect().await?;
     client.send(Command::BatteryInfo).await?;
     let Some(CommandReply::BatteryInfo { level, charging }) = wait_for_reply(
@@ -600,6 +607,7 @@ async fn read_hr_config(name: BDAddr) -> Result {
 }
 
 async fn read_hr_config_(client: &mut Client) -> Result {
+    log::info!("getting hear rate config");
     let (enabled, interval) = get_current_config(client).await?;
     println!("enabled: {enabled}, interval: {interval}");
     client.disconnect().await
@@ -634,6 +642,7 @@ async fn write_hr_config_(
     set_disabled: bool,
     set_interval: Option<u8>,
 ) -> Result {
+    log::info!("setting heart rate config");
     let (mut enabled, mut interval) = get_current_config(client).await?;
     if set_enabled {
         enabled = true;
@@ -717,6 +726,7 @@ async fn send_raw_(
     commands: Vec<String>,
     listen_seconds: Option<u64>,
 ) -> Result {
+    log::info!("sending raw packet");
     client.connect().await?;
     for command in commands
         .into_iter()
@@ -763,6 +773,7 @@ async fn blink(addr: BDAddr) -> Result {
 }
 
 async fn blink_(client: &mut Client) -> Result {
+    log::info!("sending blink");
     client.send(Command::BlinkTwice).await?;
     let _ = wait_for_reply(
         client,
@@ -774,6 +785,7 @@ async fn blink_(client: &mut Client) -> Result {
 }
 
 async fn read_stress(addr: BDAddr, mut day_offset: u8) -> Result {
+    log::info!("getting stress details");
     let mut start = OffsetDateTime::now_utc().date().midnight();
     while day_offset > 0 {
         day_offset -= 1;
