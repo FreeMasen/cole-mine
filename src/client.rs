@@ -189,7 +189,9 @@ impl ClientReceiver {
                             }
                         },
                         RawPacket::V2(ev) => {
+                            log::trace("V2 Packet");
                             if tag == constants::CMD_BIG_DATA_V2 {
+                                log::trace("Big Data tag");
                                 if !(ev[1] == constants::BIG_DATA_TYPE_SLEEP || ev[1] == constants::BIG_DATA_TYPE_SPO2) {
                                     log::warn!("Ignoring unknown big data packet {ev:?}");
                                     continue;
@@ -199,6 +201,7 @@ impl ClientReceiver {
                                 }) else {
                                     continue;
                                 };
+                                log::debug!("new big data: {state:?}");
                                 if let BigDataState::Complete(packet) = state {
                                     match SleepData::try_from(packet) {
                                         Ok(p) => CommandReply::Sleep(p),
@@ -208,6 +211,7 @@ impl ClientReceiver {
                                         }
                                     }
                                 } else {
+                                    partial_states.partial_big_data = Some(state);
                                     continue;
                                 }
                             } else if let Some(mut state) = partial_states.partial_big_data.take() {
@@ -215,6 +219,7 @@ impl ClientReceiver {
                                     log::warn!("failed to step big data state: {e}");
                                     continue;
                                 }
+                                log::debug!("updated big data: {state:?}");
                                 if let BigDataState::Complete(packet) = state {
                                     match SleepData::try_from(packet) {
                                         Ok(p) => CommandReply::Sleep(p),
