@@ -7,7 +7,7 @@ use std::{
 
 use bleasy::{Characteristic, Device, ScanConfig};
 use futures::{FutureExt, Stream, StreamExt};
-use time::{Date, OffsetDateTime, Time};
+use time::OffsetDateTime;
 
 use crate::{
     constants,
@@ -191,9 +191,10 @@ impl ClientReceiver {
                         RawPacket::V2(ev) => {
                             match ev[0] {
                                 constants::CMD_BIG_DATA_V2 => {
-                                    log::debug!("BigData Reply: {ev:?}");
+                                    log::debug!("BigData Reply: {:?}", partial_states.partial_big_data);
                                     if let Some(mut ss) = partial_states.partial_big_data.take() {
-                                        if ss.step(ev.as_ref()).is_err() {
+                                        if let Err(e) = ss.step(ev.as_ref()) {
+                                            log::warn!("failed to step big data state: {e}");
                                             continue;
                                         }
                                         ss.step(&ev).ok();
@@ -213,7 +214,10 @@ impl ClientReceiver {
                                         match ev[1] {
                                             constants::BIG_DATA_TYPE_SLEEP | constants::BIG_DATA_TYPE_SPO2
                                              => {
-                                                let Ok(state) = BigDataState::new(&ev) else {
+                                                let Ok(state) = BigDataState::new(&ev).inspect_err(|e| {
+                                                    log::warn!("Faild ot parse initial big data packet: {e}");
+                                                }) else {
+                                                    
                                                     continue;
                                                 };
                                                 if let BigDataState::Complete(packet) = state {
