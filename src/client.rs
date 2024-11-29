@@ -189,55 +189,96 @@ impl ClientReceiver {
                             }
                         },
                         RawPacket::V2(ev) => {
-                            match ev[0] {
-                                constants::CMD_BIG_DATA_V2 => {
-                                    log::debug!("BigData Reply: {:?}", partial_states.partial_big_data);
-                                    if let Some(mut ss) = partial_states.partial_big_data.take() {
-                                        if let Err(e) = ss.step(ev.as_ref()) {
-                                            log::warn!("failed to step big data state: {e}");
+                            if tag == constants::CMD_BIG_DATA_V2 {
+                                if !(ev[1] == constants::BIG_DATA_TYPE_SLEEP || ev[1] == constants::BIG_DATA_TYPE_SPO2) {
+                                    log::warn!("Ignoring unknown big data packet {ev:?}");
+                                    continue;
+                                }
+                                let Ok(state) = BigDataState::new(&ev).inspect_err(|e| {
+                                    log::warn!("Faild to parse initial big data packet: {e}");
+                                }) else {
+                                    continue;
+                                };
+                                if let BigDataState::Complete(packet) = state {
+                                    match SleepData::try_from(packet) {
+                                        Ok(p) => CommandReply::Sleep(p),
+                                        Err(e) => {
+                                            eprintln!("error converting big sleep: {e}");
                                             continue;
-                                        }
-                                        ss.step(&ev).ok();
-                                        if let BigDataState::Complete(packet) = ss {
-                                            match SleepData::try_from(packet) {
-                                                Ok(p) => CommandReply::Sleep(p),
-                                                Err(e) => {
-                                                    eprintln!("error converting big sleep: {e}");
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            partial_states.partial_big_data = Some(ss);
-                                            continue;
-                                        }
-                                    } else {
-                                        match ev[1] {
-                                            constants::BIG_DATA_TYPE_SLEEP | constants::BIG_DATA_TYPE_SPO2
-                                             => {
-                                                let Ok(state) = BigDataState::new(&ev).inspect_err(|e| {
-                                                    log::warn!("Faild ot parse initial big data packet: {e}");
-                                                }) else {
-                                                    
-                                                    continue;
-                                                };
-                                                if let BigDataState::Complete(packet) = state {
-                                                    match SleepData::try_from(packet) {
-                                                        Ok(p) => CommandReply::Sleep(p),
-                                                        Err(e) => {
-                                                            eprintln!("error converting big sleep: {e}");
-                                                            continue;
-                                                        }
-                                                    }
-                                                } else {
-                                                    continue;
-                                                }
-                                            },
-                                            _ => CommandReply::Unknown(ev),
                                         }
                                     }
-                                },
-                                _ => continue,
+                                } else {
+                                    continue;
+                                }
+                            } else if let Some(mut state) = partial_states.partial_big_data.take() {
+                                if let Err(e) = state.step(&ev) {
+                                    log::warn!("failed to step big data state: {e}");
+                                    continue;
+                                }
+                                if let BigDataState::Complete(packet) = state {
+                                    match SleepData::try_from(packet) {
+                                        Ok(p) => CommandReply::Sleep(p),
+                                        Err(e) => {
+                                            eprintln!("error converting big sleep: {e}");
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    partial_states.partial_big_data = Some(state);
+                                    continue;
+                                }
+                            } else {
+                                CommandReply::Unknown(ev)
                             }
+                            // match ev[0] {
+                            //     constants::CMD_BIG_DATA_V2 => {
+                            //         log::debug!("BigData Reply: {:?}", partial_states.partial_big_data);
+                            //         if let Some(mut ss) = partial_states.partial_big_data.take() {
+                            //             if let Err(e) = ss.step(ev.as_ref()) {
+                            //                 log::warn!("failed to step big data state: {e}");
+                            //                 continue;
+                            //             }
+                            //             ss.step(&ev).ok();
+                            //             if let BigDataState::Complete(packet) = ss {
+                            //                 match SleepData::try_from(packet) {
+                            //                     Ok(p) => CommandReply::Sleep(p),
+                            //                     Err(e) => {
+                            //                         eprintln!("error converting big sleep: {e}");
+                            //                         continue;
+                            //                     }
+                            //                 }
+                            //             } else {
+                            //                 partial_states.partial_big_data = Some(ss);
+                            //                 continue;
+                            //             }
+                            //         } else {
+                            //             match ev[1] {
+                            //                 constants::BIG_DATA_TYPE_SLEEP | constants::BIG_DATA_TYPE_SPO2
+                            //                  => {
+                            //                     let Ok(state) = BigDataState::new(&ev).inspect_err(|e| {
+                            //                         log::warn!("Faild ot parse initial big data packet: {e}");
+                            //                     }) else {
+                                                    
+                            //                         continue;
+                            //                     };
+                            //                     if let BigDataState::Complete(packet) = state {
+                            //                         match SleepData::try_from(packet) {
+                            //                             Ok(p) => CommandReply::Sleep(p),
+                            //                             Err(e) => {
+                            //                                 eprintln!("error converting big sleep: {e}");
+                            //                                 continue;
+                            //                             }
+                            //                         }
+                            //                     } else {
+                            //                         continue;
+                            //                     }
+                            //                 },
+                            //                 _ => CommandReply::Unknown(ev),
+                            //             }
+                            //         }
+                            //     },
+                            //     _ => continue,
+                            // }
                         }
                     };
                     yield cmd;
