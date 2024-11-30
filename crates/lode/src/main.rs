@@ -568,7 +568,7 @@ fn report_sleep_session(session: SleepSession) -> Result {
         time.date()
             .format(&time::macros::format_description!("[year]-[month]-[day]"))?
     );
-    let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    let fmt = time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]");
     for stage in session.stages {
         let (n, m) = match stage {
             cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
