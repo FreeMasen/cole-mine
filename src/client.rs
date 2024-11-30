@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub struct Client {
-    device: Device,
+    pub device: Device,
     rx: Option<ClientReceiver>,
     tx: Characteristic,
     tx2: Characteristic,
@@ -235,55 +235,6 @@ impl ClientReceiver {
                             } else {
                                 CommandReply::Unknown(ev)
                             }
-                            // match ev[0] {
-                            //     constants::CMD_BIG_DATA_V2 => {
-                            //         log::debug!("BigData Reply: {:?}", partial_states.partial_big_data);
-                            //         if let Some(mut ss) = partial_states.partial_big_data.take() {
-                            //             if let Err(e) = ss.step(ev.as_ref()) {
-                            //                 log::warn!("failed to step big data state: {e}");
-                            //                 continue;
-                            //             }
-                            //             ss.step(&ev).ok();
-                            //             if let BigDataState::Complete(packet) = ss {
-                            //                 match SleepData::try_from(packet) {
-                            //                     Ok(p) => CommandReply::Sleep(p),
-                            //                     Err(e) => {
-                            //                         eprintln!("error converting big sleep: {e}");
-                            //                         continue;
-                            //                     }
-                            //                 }
-                            //             } else {
-                            //                 partial_states.partial_big_data = Some(ss);
-                            //                 continue;
-                            //             }
-                            //         } else {
-                            //             match ev[1] {
-                            //                 constants::BIG_DATA_TYPE_SLEEP | constants::BIG_DATA_TYPE_SPO2
-                            //                  => {
-                            //                     let Ok(state) = BigDataState::new(&ev).inspect_err(|e| {
-                            //                         log::warn!("Faild ot parse initial big data packet: {e}");
-                            //                     }) else {
-                                                    
-                            //                         continue;
-                            //                     };
-                            //                     if let BigDataState::Complete(packet) = state {
-                            //                         match SleepData::try_from(packet) {
-                            //                             Ok(p) => CommandReply::Sleep(p),
-                            //                             Err(e) => {
-                            //                                 eprintln!("error converting big sleep: {e}");
-                            //                                 continue;
-                            //                             }
-                            //                         }
-                            //                     } else {
-                            //                         continue;
-                            //                     }
-                            //                 },
-                            //                 _ => CommandReply::Unknown(ev),
-                            //             }
-                            //         }
-                            //     },
-                            //     _ => continue,
-                            // }
                         }
                     };
                     yield cmd;
@@ -406,7 +357,12 @@ impl TryFrom<BigDataPacket> for SleepData {
                     constants::SLEEP_TYPE_DEEP => SleepStage::Deep(minutes),
                     constants::SLEEP_TYPE_REM => SleepStage::Rem(minutes),
                     constants::SLEEP_TYPE_AWAKE => SleepStage::Awake(minutes),
-                    _ => return Err(format!("{i}/{remaining_bytes} sleep sample type invalid {stage}").into()),
+                    _ => {
+                        return Err(format!(
+                            "{i}/{remaining_bytes} sleep sample type invalid {stage}"
+                        )
+                        .into())
+                    }
                 });
             }
             sessions.push(SleepSession { start, end, stages })
@@ -997,11 +953,8 @@ mod tests {
     async fn big_data_sleep2() {
         env_logger::builder().is_test(true).try_init().ok();
         let packet = vec![
-            5u8, 6, 26, 
-            177, 0, 11, 2, 
-            2, 67, 3, 35, 2, 15, 4, 34, 2, 95, 3, 16, 2, 1, 5, 13, 2, 49, 3, 18, 2, 3, 
-            4, 40, 9, 0, 224, 1, 2, 
-            61, 3, 31, 2, 15, 4, 33, 3, 31, 2, 31, 4, 34,
+            5u8, 6, 26, 177, 0, 11, 2, 2, 67, 3, 35, 2, 15, 4, 34, 2, 95, 3, 16, 2, 1, 5, 13, 2,
+            49, 3, 18, 2, 3, 4, 40, 9, 0, 224, 1, 2, 61, 3, 31, 2, 15, 4, 33, 3, 31, 2, 31, 4, 34,
             3, 33, 2, 17, 4, 15, 2, 10, 0, 1, 2, 29, 5, 6, 2, 55, 5, 12, 2, 50, 2, 7, 3, 32, 0, 0,
             251, 1, 2, 73, 3, 18, 2, 18, 4, 31, 3, 33, 2, 31, 4, 33, 2, 16, 3, 18, 2, 15, 4, 17, 2,
             34, 3, 33, 2, 137, 2, 36, 159, 5, 4, 2, 2, 71, 3, 16, 2, 35, 4, 18, 3, 34, 2, 30, 4,

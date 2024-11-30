@@ -2,6 +2,10 @@ use clap::{Parser, Subcommand};
 use cole_mine::client::{Client, Command, CommandReply, DurationExt, SleepSession};
 
 use cole_mine::BDAddr;
+use std::convert::Infallible;
+use std::future::Future;
+use std::process::Output;
+use std::str::FromStr;
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -23,10 +27,7 @@ enum Commands {
     },
     /// Get the hardware and firmware information from a device
     DeviceDetails {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        address: BDAddr,
+        id: DeviceIdentifier,
     },
     #[clap(flatten)]
     SendCommand(SendCommand),
@@ -35,10 +36,7 @@ enum Commands {
 #[derive(Subcommand)]
 enum SendCommand {
     Raw {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        address: BDAddr,
+        id: DeviceIdentifier,
         // a hex encoded byte array with colons seperating
         #[arg(short = 'c', long = "command")]
         commands: Vec<String>,
@@ -46,19 +44,13 @@ enum SendCommand {
         listen_seconds: Option<u64>,
     },
     Listen {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        address: BDAddr,
+        id: DeviceIdentifier,
     },
     /// Set the time
     ///
     /// optional minutes, hours, days, and years arguments adjust the current time
     SetTime {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        address: BDAddr,
+        id: DeviceIdentifier,
         /// Minutes from now to add/remove
         #[arg(short = 'm', long = "minutes")]
         minutes: Option<isize>,
@@ -76,41 +68,26 @@ enum SendCommand {
         chinese: bool,
     },
     ReadStress {
-        addr: BDAddr,
+        id: DeviceIdentifier,
         #[arg(default_value_t = 0)]
         day_offset: u8,
     },
     ReadSportDetail {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
         #[arg(default_value_t = 0)]
         day_offset: u8,
     },
     ReadHeartRate {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
     },
     ReadBatteryInfo {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
     },
     GetHeartRateSettings {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
     },
     SetHeartRateSettings {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
         #[arg(short = 'e', long = "enable")]
         enabled: bool,
         #[arg(short = 'd', long = "disable")]
@@ -119,20 +96,38 @@ enum SendCommand {
         interval: Option<u8>,
     },
     Blink {
-        #[cfg(target_os = "macos")]
-        name: String,
-        #[cfg(not(target_os = "macos"))]
-        addr: BDAddr,
+        id: DeviceIdentifier,
     },
     GetSleep {
-        addr: BDAddr,
+        id: DeviceIdentifier,
     },
+}
+#[derive(Debug, Clone)]
+enum DeviceIdentifier {
+    Mac(BDAddr),
+    Name(String),
+}
+
+impl FromStr for DeviceIdentifier {
+    type Err = Infallible;
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if let Ok(addr) = BDAddr::from_str_delim(s) {
+            return Ok(Self::Mac(addr));
+        }
+        if let Ok(addr) = BDAddr::from_str_no_delim(s) {
+            return Ok(Self::Mac(addr));
+        }
+        Ok(Self::Name(s.to_string()))
+    }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result {
     env_logger::init();
-    if std::env::var("LODE_SET_SOUND_LOCAL_OFFSET").map(|v| v == "1").unwrap_or_default() {
+    if std::env::var("LODE_SET_SOUND_LOCAL_OFFSET")
+        .map(|v| v == "1")
+        .unwrap_or_default()
+    {
         unsafe {
             time::util::local_offset::set_soundness(time::util::local_offset::Soundness::Sound);
         }
@@ -140,21 +135,7 @@ async fn main() -> Result {
     match Commands::parse() {
         Commands::FindRings { see_all } => find_rings(see_all).await,
         Commands::Goals { addr } => read_goals(addr).await,
-        Commands::DeviceDetails {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            address,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                get_device_details(name).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                get_device_details(address).await
-            }
-        }
+        Commands::DeviceDetails { id } => get_device_details(id).await,
         Commands::SendCommand(cmd) => send_command(cmd).await,
     }
 }
@@ -162,165 +143,34 @@ async fn main() -> Result {
 async fn send_command(cmd: SendCommand) -> Result {
     match cmd {
         SendCommand::Raw {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            address,
+            id,
             commands,
             listen_seconds,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                send_raw(name, commands, listen_seconds).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                send_raw(address, commands, listen_seconds).await
-            }
-        }
-        SendCommand::ReadStress { addr, day_offset } => read_stress(addr, day_offset).await,
-        SendCommand::Listen {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            address,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                send_raw(name, Vec::new(), Some(120)).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                send_raw(address, Vec::new(), Some(120)).await
-            }
-        }
+        } => send_raw(id, commands, listen_seconds).await,
+        SendCommand::ReadStress { id, day_offset } => read_stress(id, day_offset).await,
+        SendCommand::Listen { id } => send_raw(id, Vec::new(), Some(120)).await,
         SendCommand::SetTime {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            address,
+            id,
             minutes,
             hours,
             days,
             years,
             chinese,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                set_time(name, minutes, hours, days, years, chinese).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                set_time(address, minutes, hours, days, years, chinese).await
-            }
+        } => set_time(id, minutes, hours, days, years, chinese).await,
+        SendCommand::ReadSportDetail { id, day_offset } => read_sport_details(id, day_offset).await,
+        SendCommand::ReadHeartRate { id } => {
+            read_heart_rate(id, OffsetDateTime::now_utc().date().previous_day().unwrap()).await
         }
-        SendCommand::ReadSportDetail {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
-            day_offset,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                read_sport_details(name, day_offset).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                read_sport_details(addr, day_offset).await
-            }
-        }
-        SendCommand::ReadHeartRate {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                read_heart_rate(
-                    name,
-                    OffsetDateTime::now_utc().date().previous_day().unwrap(),
-                )
-                .await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                read_heart_rate(
-                    addr,
-                    OffsetDateTime::now_utc().date().previous_day().unwrap(),
-                )
-                .await
-            }
-        }
-        SendCommand::ReadBatteryInfo {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                read_battery_info(name).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                read_battery_info(addr).await
-            }
-        }
-        SendCommand::GetHeartRateSettings {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                read_hr_config(name).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                read_hr_config(addr).await
-            }
-        }
+        SendCommand::ReadBatteryInfo { id } => read_battery_info(id).await,
+        SendCommand::GetHeartRateSettings { id } => read_hr_config(id).await,
         SendCommand::SetHeartRateSettings {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
+            id,
             enabled,
             disabled,
             interval,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                write_hr_config(name, enabled, disabled, interval).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                write_hr_config(addr, enabled, disabled, interval).await
-            }
-        }
-        SendCommand::Blink {
-            #[cfg(target_os = "macos")]
-            name,
-            #[cfg(not(target_os = "macos"))]
-            addr,
-        } => {
-            #[cfg(target_os = "macos")]
-            {
-                blink(name).await
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                blink(addr).await
-            }
-        },
-        SendCommand::GetSleep {
-            addr
-        } => {
-            read_sleep(addr).await
-        }
+        } => write_hr_config(id, enabled, disabled, interval).await,
+        SendCommand::Blink { id } => blink(id).await,
+        SendCommand::GetSleep { id } => read_sleep(id).await,
     }
 }
 
@@ -345,34 +195,8 @@ async fn read_goals(addr: BDAddr) -> Result {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
 async fn set_time(
-    name: String,
-    minutes: Option<isize>,
-    hours: Option<isize>,
-    days: Option<isize>,
-    years: Option<isize>,
-    chinese: bool,
-) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    set_time_(&mut client, minutes, hours, days, years, chinese).await
-}
-#[cfg(not(target_os = "macos"))]
-async fn set_time(
-    addr: BDAddr,
-    minutes: Option<isize>,
-    hours: Option<isize>,
-    days: Option<isize>,
-    years: Option<isize>,
-    chinese: bool,
-) -> Result {
-    let mut client = Client::new(addr).await?;
-    set_time_(&mut client, minutes, hours, days, years, chinese).await
-}
-
-async fn set_time_(
-    client: &mut Client,
+    id: DeviceIdentifier,
     minutes: Option<isize>,
     hours: Option<isize>,
     days: Option<isize>,
@@ -417,47 +241,39 @@ async fn set_time_(
     if now.year() < 2000 {
         return Err(format!("Provided date offsets reached an unsupported date m: {minutes:?}, h: {hours:?}, d: {days:?}, y: {years:?}: {:?}", now.format(&Rfc3339)).into());
     }
-    client.connect().await?;
-    client
-        .send(Command::SetTime {
-            when: now,
-            language: if chinese { 0 } else { 1 },
-        })
+    with_client(id, |mut client| async move {
+        client
+            .send(Command::SetTime {
+                when: now,
+                language: if chinese { 0 } else { 1 },
+            })
+            .await?;
+        let _ = wait_for_reply(
+            &mut client,
+            |reply| matches!(reply, CommandReply::SetTime),
+            "set time",
+        )
         .await?;
-    let _ = wait_for_reply(
-        client,
-        |reply| matches!(reply, CommandReply::SetTime),
-        "set time",
-    )
-    .await?;
-    client.disconnect().await
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(target_os = "macos")]
-async fn get_device_details(name: String) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    get_device_details_(&mut client).await
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn get_device_details(addr: BDAddr) -> Result {
-    let mut client = Client::new(addr).await?;
-    get_device_details_(&mut client).await
-}
-
-async fn get_device_details_(client: &mut Client) -> Result {
-    log::info!("getting device details");
-    let details = client.device_details().await?;
-    println!(
-        "Hardware: {}",
-        details.hw.unwrap_or_else(|| "<not found>".to_string())
-    );
-    println!(
-        "Firmware: {}",
-        details.fw.unwrap_or_else(|| "<not found>".to_string())
-    );
-    client.disconnect().await
+async fn get_device_details(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("getting device details");
+        let details = client.device_details().await?;
+        println!(
+            "Hardware: {}",
+            details.hw.unwrap_or_else(|| "<not found>".to_string())
+        );
+        println!(
+            "Firmware: {}",
+            details.fw.unwrap_or_else(|| "<not found>".to_string())
+        );
+        Ok(())
+    })
+    .await
 }
 
 fn get_duration(mul: u64, unit: isize) -> (Duration, bool) {
@@ -466,222 +282,143 @@ fn get_duration(mul: u64, unit: isize) -> (Duration, bool) {
     (Duration::from_secs(mul * unit), add)
 }
 
-#[cfg(target_os = "macos")]
-async fn read_sport_details(name: String, day_offset: u8) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    read_sport_details_(&mut client, day_offset).await
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn read_sport_details(addr: BDAddr, day_offset: u8) -> Result {
-    let mut client = Client::new(addr).await?;
-    read_sport_details_(&mut client, day_offset).await
-}
-async fn read_sport_details_(client: &mut Client, day_offset: u8) -> Result {
-    log::info!("getting sport details");
-    client.connect().await?;
-    client.send(Command::ReadSportDetail { day_offset }).await?;
-    while let Ok(Ok(Some(event))) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await
-    {
-        if let CommandReply::SportDetail(details) = event {
-            for detail in details {
-                println!(
-                    "{}{:02}{:02}-{}",
-                    detail.year, detail.month, detail.day, detail.time_index
-                );
-                println!("  Cals: {:>5.2}", detail.calories as f32 / 1000.0);
-                println!("  Stps: {:>8}", detail.steps);
-                let feet = detail.distance as f32 / 3.28084;
-                if feet > 5280.0 {
-                    println!("  Dist: {:>8.2}mi", feet / 5280.0);
-                } else {
-                    println!("  Dist: {:>8.2}ft", feet);
+async fn read_sport_details(id: DeviceIdentifier, day_offset: u8) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("getting sport details");
+        client.send(Command::ReadSportDetail { day_offset }).await?;
+        while let Ok(Ok(Some(event))) =
+            tokio::time::timeout(std::time::Duration::from_secs(5), client.read_next()).await
+        {
+            if let CommandReply::SportDetail(details) = event {
+                for detail in details {
+                    println!(
+                        "{}{:02}{:02}-{}",
+                        detail.year, detail.month, detail.day, detail.time_index
+                    );
+                    println!("  Cals: {:>5.2}", detail.calories as f32 / 1000.0);
+                    println!("  Stps: {:>8}", detail.steps);
+                    let feet = detail.distance as f32 / 3.28084;
+                    if feet > 5280.0 {
+                        println!("  Dist: {:>8.2}mi", feet / 5280.0);
+                    } else {
+                        println!("  Dist: {:>8.2}ft", feet);
+                    }
                 }
+            } else {
+                eprintln!("Unexpected report from sport details: {event:?}");
             }
-        } else {
-            eprintln!("Unexpected report from sport details: {event:?}");
         }
-    }
-    client.disconnect().await
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(target_os = "macos")]
-async fn read_heart_rate(name: String, date: time::Date) -> Result {
-    let device = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(device).await?;
-    read_heart_rate_(&mut client, date).await
+async fn read_heart_rate(id: DeviceIdentifier, date: time::Date) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("getting hear rate");
+        let target = date.midnight().assume_utc();
+        let timestamp = target.unix_timestamp();
+        client
+            .send(Command::ReadHeartRate {
+                timestamp: timestamp.try_into().unwrap(),
+            })
+            .await?;
+        while let Some(CommandReply::HeartRate(hr)) = wait_for_reply(
+            &mut client,
+            |reply| matches!(reply, CommandReply::HeartRate(_)),
+            "get heart rate info",
+        )
+        .await?
+        {
+            let mut time = if let Ok(now) = OffsetDateTime::now_local() {
+                let local_offset = now.offset();
+                target.replace_offset(local_offset)
+            } else {
+                target
+            };
+            println!(
+                "Heart Rates {}-{:02}-{:02} {}",
+                target.year(),
+                target.month(),
+                target.day(),
+                hr.range
+            );
+            for rate in hr.rates {
+                println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
+                time += Duration::from_secs(60 * 5);
+            }
+        }
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn read_heart_rate(addr: BDAddr, date: time::Date) -> Result {
-    let mut client = Client::new(addr).await?;
-    read_heart_rate_(&mut client, date).await
-}
-async fn read_heart_rate_(client: &mut Client, date: time::Date) -> Result {
-    log::info!("getting hear rate");
-    let target = date.midnight().assume_utc();
-    let timestamp = target.unix_timestamp();
-    client.connect().await?;
-    client
-        .send(Command::ReadHeartRate {
-            timestamp: timestamp.try_into().unwrap(),
-        })
-        .await?;
-    while let Some(CommandReply::HeartRate(hr)) = wait_for_reply(
-        client,
-        |reply| matches!(reply, CommandReply::HeartRate(_)),
-        "get heart rate info",
-    )
-    .await?
-    {
-        let mut time = if let Ok(now) = OffsetDateTime::now_local() {
-            let local_offset = now.offset();
-            target.replace_offset(local_offset)
-        } else {
-            target
+async fn read_battery_info(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("getting battery info");
+        client.send(Command::BatteryInfo).await?;
+        let Some(CommandReply::BatteryInfo { level, charging }) = wait_for_reply(
+            &mut client,
+            |reply| matches!(reply, CommandReply::BatteryInfo { .. }),
+            "get battery info",
+        )
+        .await?
+        else {
+            return Err("no reply".into());
         };
-        println!(
-            "Heart Rates {}-{:02}-{:02} {}",
-            target.year(),
-            target.month(),
-            target.day(),
-            hr.range
-        );
-        for rate in hr.rates {
-            println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
-            time += Duration::from_secs(60 * 5);
-        }
-    }
-    client.disconnect().await
+        println!("{level}% {charging}");
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn read_battery_info(addr: BDAddr) -> Result {
-    let mut client = Client::new(addr).await?;
-    read_battery_info_(&mut client).await
+async fn read_hr_config(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("getting hear rate config");
+        let (enabled, interval) = get_current_config(&mut client).await?;
+        println!("enabled: {enabled}, interval: {interval}");
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(target_os = "macos")]
-async fn read_battery_info(name: String) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    read_battery_info_(&mut client).await
-}
-
-#[cfg(target_os = "macos")]
-async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
-    use futures::StreamExt;
-
-    let mut stream = cole_mine::discover_by_name(name.to_string()).await?;
-    while let Some(dev) = stream.next().await {
-        let Some(n) = dev.local_name().await else {
-            continue;
-        };
-        if n == name {
-            return Ok(dev);
-        }
-    }
-    Err("Undable to find device by name".to_string().into())
-}
-
-async fn read_battery_info_(client: &mut Client) -> Result {
-    log::info!("getting battery info");
-    client.connect().await?;
-    client.send(Command::BatteryInfo).await?;
-    let Some(CommandReply::BatteryInfo { level, charging }) = wait_for_reply(
-        client,
-        |reply| matches!(reply, CommandReply::BatteryInfo { .. }),
-        "get battery info",
-    )
-    .await?
-    else {
-        return Err("no reply".into());
-    };
-    println!("{level}% {charging}");
-    client.disconnect().await
-}
-
-#[cfg(target_os = "macos")]
-async fn read_hr_config(name: String) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    read_hr_config_(&mut client).await
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn read_hr_config(name: BDAddr) -> Result {
-    let mut client = Client::new(name).await?;
-    read_hr_config_(&mut client).await
-}
-
-async fn read_hr_config_(client: &mut Client) -> Result {
-    log::info!("getting hear rate config");
-    let (enabled, interval) = get_current_config(client).await?;
-    println!("enabled: {enabled}, interval: {interval}");
-    client.disconnect().await
-}
-
-#[cfg(target_os = "macos")]
 async fn write_hr_config(
-    name: String,
-    enabled: bool,
-    disabled: bool,
-    interval: Option<u8>,
-) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    write_hr_config_(&mut client, enabled, disabled, interval).await
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn write_hr_config(
-    name: BDAddr,
-    enabled: bool,
-    disabled: bool,
-    interval: Option<u8>,
-) -> Result {
-    let mut client = Client::new(name).await?;
-    write_hr_config_(&mut client, enabled, disabled, interval).await
-}
-
-async fn write_hr_config_(
-    client: &mut Client,
+    id: DeviceIdentifier,
     set_enabled: bool,
     set_disabled: bool,
     set_interval: Option<u8>,
 ) -> Result {
     log::info!("setting heart rate config");
-    let (mut enabled, mut interval) = get_current_config(client).await?;
-    if set_enabled {
-        enabled = true;
-    }
-    if set_disabled {
-        enabled = false;
-    }
-    if let Some(set_interval) = set_interval {
-        interval = set_interval;
-    }
-    client
-        .send(Command::SetHeartRateSettings { enabled, interval })
-        .await?;
-    let Some(CommandReply::HeartRateSettings { enabled, interval }) = wait_for_reply(
-        client,
-        |reply| matches!(reply, CommandReply::HeartRateSettings { .. }),
-        "set heart rate settings",
-    )
-    .await?
-    else {
-        client.disconnect().await?;
-        unreachable!()
-    };
-    println!("Updated enabled: {enabled}, interval: {interval}");
-    client.disconnect().await
+    with_client(id, |mut client| async move {
+        let (mut enabled, mut interval) = get_current_config(&mut client).await?;
+        if set_enabled {
+            enabled = true;
+        }
+        if set_disabled {
+            enabled = false;
+        }
+        if let Some(set_interval) = set_interval {
+            interval = set_interval;
+        }
+        client
+            .send(Command::SetHeartRateSettings { enabled, interval })
+            .await?;
+        let Some(CommandReply::HeartRateSettings { enabled, interval }) = wait_for_reply(
+            &mut client,
+            |reply| matches!(reply, CommandReply::HeartRateSettings { .. }),
+            "set heart rate settings",
+        )
+        .await?
+        else {
+            unreachable!()
+        };
+        println!("Updated enabled: {enabled}, interval: {interval}");
+        Ok(())
+    })
+    .await
 }
 
 async fn get_current_config(client: &mut Client) -> Result<(bool, u8)> {
-    client.connect().await?;
     client.send(Command::GetHeartRateSettings).await?;
     if let Some(event) = wait_for_reply(
         client,
@@ -715,137 +452,118 @@ async fn wait_for_reply(
     Ok(None)
 }
 
-#[cfg(target_os = "macos")]
-async fn send_raw(name: String, commands: Vec<String>, listen_seconds: Option<u64>) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    let ret = send_raw_(&mut client, commands, listen_seconds).await;
-    client.disconnect().await?;
-    ret
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn send_raw(addr: BDAddr, commands: Vec<String>, listen_seconds: Option<u64>) -> Result {
-    let mut client = Client::new(addr).await?;
-    let ret = send_raw_(&mut client, commands, listen_seconds).await;
-    client.disconnect().await?;
-    ret
-}
-async fn send_raw_(
-    client: &mut Client,
+async fn send_raw(
+    id: DeviceIdentifier,
     commands: Vec<String>,
     listen_seconds: Option<u64>,
 ) -> Result {
-    log::info!("sending raw packet");
-    client.connect().await?;
-    for command in commands
-        .into_iter()
-        .filter_map(|s| parse_command(s.as_str()))
-    {
-        client.send(Command::Raw(command)).await?;
-    }
-    let Some(listening_for) = listen_seconds else {
-        return Ok(());
-    };
-    let to = Duration::from_secs(listening_for);
-    tokio::time::timeout(to, async {
-        while let Ok(Some(reply)) = client.read_next().await {
-            println!("{reply:?}");
+    with_client(id, move |mut client| {
+        let commands = commands.clone();
+        async move {
+            log::info!("sending raw packet");
+            for command in commands
+                .clone()
+                .into_iter()
+                .filter_map(|s| parse_raw_command(s.as_str()))
+            {
+                client.send(Command::Raw(command)).await?;
+            }
+            let listening_for = listen_seconds.unwrap_or(5);
+            let to = Duration::from_secs(listening_for);
+            tokio::time::timeout(to, async {
+                while let Ok(Some(reply)) = client.read_next().await {
+                    println!("{reply:?}");
+                }
+            })
+            .await
+            .ok();
+            Ok(())
         }
     })
     .await
-    .ok();
-    Ok(())
 }
 
-fn parse_command(s: &str) -> Option<Vec<u8>> {
+fn parse_raw_command(s: &str) -> Option<Vec<u8>> {
     s.split(':')
         .map(|hex| Ok(u8::from_str_radix(hex, 16)?))
         .collect::<Result<Vec<u8>>>()
         .ok()
 }
 
-#[cfg(target_os = "macos")]
-async fn blink(name: String) -> Result {
-    let dev = find_device_by_name(&name).await?;
-    let mut client = Client::with_device(dev).await?;
-    let ret = blink_(&mut client).await;
-    client.disconnect().await?;
-    ret
+async fn blink(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        log::info!("sending blink");
+        client.send(Command::BlinkTwice).await?;
+        let _ = wait_for_reply(
+            &mut client,
+            |reply| matches!(reply, CommandReply::BlinkTwice),
+            "blink",
+        )
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn blink(addr: BDAddr) -> Result {
-    let mut client = Client::new(addr).await?;
-    let ret = blink_(&mut client).await;
-    client.disconnect().await?;
-    ret
-}
-
-async fn blink_(client: &mut Client) -> Result {
-    log::info!("sending blink");
-    client.send(Command::BlinkTwice).await?;
-    let _ = wait_for_reply(
-        client,
-        |reply| matches!(reply, CommandReply::BlinkTwice),
-        "blink",
-    )
-    .await?;
-    Ok(())
-}
-
-async fn read_stress(addr: BDAddr, mut day_offset: u8) -> Result {
+async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
     log::info!("getting stress details");
-    let mut start = OffsetDateTime::now_utc().date().midnight();
-    while day_offset > 0 {
-        day_offset -= 1;
-        start = start
-            .date()
-            .previous_day()
-            .ok_or_else(|| format!("time math...."))?
-            .midnight();
-    }
+    with_client(id, |mut client| async move {
+        let mut start = OffsetDateTime::now_utc().date().midnight();
+        while day_offset > 0 {
+            day_offset -= 1;
+            start = start
+                .date()
+                .previous_day()
+                .ok_or_else(|| format!("time math...."))?
+                .midnight();
+        }
 
-    let mut client = Client::new(addr).await?;
-    let ret = client.send(Command::ReadStress { day_offset }).await;
-    if ret.is_ok() {
-        while let Ok(Some(CommandReply::Stress {
-            time_interval_sec,
-            measurements,
-        })) = client.read_next().await
-        {
-            let minutes_in_a_day = 24 * 60;
-            let segments = time_interval_sec / minutes_in_a_day;
-            for i in 0..segments as u64 {
-                let time = start + Duration::from_secs(time_interval_sec as u64 * i);
-                println!(
-                    "{}: {}",
-                    time.format(&time::format_description::well_known::Rfc3339)
-                        .unwrap(),
-                    &measurements[i as usize]
-                )
+        let ret = client.send(Command::ReadStress { day_offset }).await;
+        if ret.is_ok() {
+            while let Ok(Some(CommandReply::Stress {
+                time_interval_sec,
+                measurements,
+            })) = client.read_next().await
+            {
+                let minutes_in_a_day = 24 * 60;
+                let segments = time_interval_sec / minutes_in_a_day;
+                for i in 0..segments as u64 {
+                    let time = start + Duration::from_secs(time_interval_sec as u64 * i);
+                    println!(
+                        "{}: {}",
+                        time.format(&time::format_description::well_known::Rfc3339)
+                            .unwrap(),
+                        &measurements[i as usize]
+                    )
+                }
             }
         }
-    }
-    client.disconnect().await?;
-    ret
+        Ok(())
+    })
+    .await
 }
 
-async fn read_sleep(addr: BDAddr) -> Result {
-    let mut client = Client::new(addr).await?;
-    client.connect().await?;
-    if let Err(e) = read_sleep_(&mut client).await {
-        eprintln!("Failed to read sleep: {e}");
-    }
-    client.disconnect().await?;
-    Ok(())
+async fn read_sleep(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        client
+            .send(Command::Raw(vec![0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff]))
+            .await?;
+        while let Some(packet) = client.read_next().await? {
+            if let CommandReply::Sleep(sleep_data) = packet {
+                for session in sleep_data.sessions {
+                    report_sleep_session(session)?;
+                }
+            }
+        }
+        Ok(())
+    })
+    .await
 }
 
 async fn read_sleep_(client: &mut Client) -> Result {
-    
-    client.send(Command::Raw(vec![
-        0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff
-    ])).await?;
+    client
+        .send(Command::Raw(vec![0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff]))
+        .await?;
     while let Some(packet) = client.read_next().await? {
         if let CommandReply::Sleep(sleep_data) = packet {
             for session in sleep_data.sessions {
@@ -857,8 +575,14 @@ async fn read_sleep_(client: &mut Client) -> Result {
 }
 
 fn report_sleep_session(session: SleepSession) -> Result {
-    let mut time = session.start.to_offset(time::UtcOffset::current_local_offset().or_else(|_| time::UtcOffset::from_hms(-6, 0, 0))?);
-    println!("--{}--", time.date().format(&time::macros::format_description!("[year]-[month]-[day]"))?);
+    let mut time = session.start.to_offset(
+        time::UtcOffset::current_local_offset().or_else(|_| time::UtcOffset::from_hms(-6, 0, 0))?,
+    );
+    println!(
+        "--{}--",
+        time.date()
+            .format(&time::macros::format_description!("[year]-[month]-[day]"))?
+    );
     let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     for stage in session.stages {
         let (n, m) = match stage {
@@ -868,13 +592,48 @@ fn report_sleep_session(session: SleepSession) -> Result {
             cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
         };
         let end = time + Duration::minutes(m);
-        println!("{}-{} ({m}): {n}", 
-            time.format(fmt)?,
-            end.format(fmt)?,
-        );
+        println!("{}-{} ({m}): {n}", time.format(fmt)?, end.format(fmt)?,);
         time = end;
     }
     Ok(())
+}
+
+async fn with_client<'a, F, G>(id: DeviceIdentifier, cb: F) -> Result
+where
+    F: Fn(Client) -> G + 'a,
+    G: Future<Output = Result> + 'a,
+{
+    let mut client = get_client(id).await?;
+    client.connect().await?;
+    let device = client.device.clone();
+    let ret = cb(client).await;
+    device.disconnect().await?;
+    ret
+}
+
+async fn get_client(id: DeviceIdentifier) -> Result<Client> {
+    match id {
+        DeviceIdentifier::Mac(mac) => Client::new(mac).await,
+        DeviceIdentifier::Name(name) => {
+            let dev = find_device_by_name(&name).await?;
+            Client::with_device(dev).await
+        }
+    }
+}
+
+async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
+    use futures::StreamExt;
+
+    let mut stream = cole_mine::discover_by_name(name.to_string()).await?;
+    while let Some(dev) = stream.next().await {
+        let Some(n) = dev.local_name().await else {
+            continue;
+        };
+        if n == name {
+            return Ok(dev);
+        }
+    }
+    Err("Undable to find device by name".to_string().into())
 }
 
 #[cfg(test)]
@@ -888,7 +647,7 @@ mod tests {
     fn report_sleep_session_works() {
         let session = SleepSession {
             start: OffsetDateTime::new_utc(
-                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(), 
+                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(),
                 Time::from_hms(4, 25, 0).unwrap(),
             ),
             end: OffsetDateTime::new_utc(
