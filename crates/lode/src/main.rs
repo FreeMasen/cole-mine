@@ -124,7 +124,7 @@ enum SendCommand {
         #[cfg(not(target_os = "macos"))]
         addr: BDAddr,
     },
-    SendCommand::GetSleep {
+    GetSleep {
         addr: BDAddr,
     },
 }
