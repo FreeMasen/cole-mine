@@ -1,6 +1,6 @@
 ---
 source: src/client.rs
-expression: sleep_data
+expression: "&sleep_data"
 ---
 SleepData {
     sessions: [

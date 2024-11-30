@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
-use cole_mine::client::{Client, Command, CommandReply, DurationExt, SleepSession};
+use cole_mine::big_data::{OxygenMeasurement, SleepSession};
+use cole_mine::client::Command;
+use cole_mine::{incoming_messages::CommandReply, Client, DurationExt};
 
 use cole_mine::BDAddr;
 use std::convert::Infallible;
@@ -97,9 +99,12 @@ enum SendCommand {
     Blink {
         id: DeviceIdentifier,
     },
-    GetSleep {
+    ReadSleep {
         id: DeviceIdentifier,
     },
+    ReadOxygen {
+        id: DeviceIdentifier,
+    }
 }
 #[derive(Debug, Clone)]
 enum DeviceIdentifier {
@@ -169,7 +174,8 @@ async fn send_command(cmd: SendCommand) -> Result {
             interval,
         } => write_hr_config(id, enabled, disabled, interval).await,
         SendCommand::Blink { id } => blink(id).await,
-        SendCommand::GetSleep { id } => read_sleep(id).await,
+        SendCommand::ReadSleep { id } => read_sleep(id).await,
+        SendCommand::ReadOxygen { id } => read_oxygen(id).await,
     }
 }
 
@@ -545,12 +551,30 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
 async fn read_sleep(id: DeviceIdentifier) -> Result {
     with_client(id, |mut client| async move {
         client
-            .send(Command::Raw(vec![0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff]))
+            .send(Command::SyncSleep)
             .await?;
         while let Some(packet) = client.read_next().await? {
             if let CommandReply::Sleep(sleep_data) = packet {
                 for session in sleep_data.sessions {
                     report_sleep_session(session)?;
+                }
+                break;
+            }
+        }
+        Ok(())
+    })
+    .await
+}
+
+async fn read_oxygen(id: DeviceIdentifier) -> Result {
+    with_client(id, |mut client| async move {
+        client
+            .send(Command::SyncOxygen)
+            .await?;
+        while let Some(packet) = client.read_next().await? {
+            if let CommandReply::Oxygen(oxy) = packet {
+                for sample in oxy.samples {
+                    report_oxygen_info(sample);
                 }
                 break;
             }
@@ -569,19 +593,31 @@ fn report_sleep_session(session: SleepSession) -> Result {
         time.date()
             .format(&time::macros::format_description!("[year]-[month]-[day]"))?
     );
-    let fmt = time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]");
+    let fmt =
+        time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]");
     for stage in session.stages {
         let (n, m) = match stage {
-            cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
-            cole_mine::client::SleepStage::Deep(m) => ("Deep", m as u64),
-            cole_mine::client::SleepStage::Rem(m) => ("REM", m as u64),
-            cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
+            cole_mine::SleepStage::Light(m) => ("Light", m as u64),
+            cole_mine::SleepStage::Deep(m) => ("Deep", m as u64),
+            cole_mine::SleepStage::Rem(m) => ("REM", m as u64),
+            cole_mine::SleepStage::Awake(m) => ("Awake", m as u64),
         };
         let end = time + Duration::minutes(m);
         println!("{}-{} ({m}): {n}", time.format(fmt)?, end.format(fmt)?,);
         time = end;
     }
     Ok(())
+}
+
+fn report_oxygen_info(oxy: OxygenMeasurement) {
+    println!(
+        "{}: {}-{}, ±{} ~{:.02}",
+        oxy.when.format(time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]")).unwrap(),
+        oxy.min,
+        oxy.max,
+        oxy.min.max(oxy.max) - oxy.min.min(oxy.max),
+        (oxy.min + oxy.max) as f32 / 2.0,
+    )
 }
 
 async fn with_client<'a, F, G>(id: DeviceIdentifier, cb: F) -> Result
@@ -624,7 +660,7 @@ async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
 
 #[cfg(test)]
 mod tests {
-    use cole_mine::client::SleepStage;
+    use cole_mine::SleepStage;
     use time::{Date, Time};
 
     use super::*;

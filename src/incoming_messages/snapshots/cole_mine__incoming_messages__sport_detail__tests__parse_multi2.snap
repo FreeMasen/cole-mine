@@ -1,5 +1,5 @@
 ---
-source: src/sport_detail.rs
+source: src/incoming_messages/sport_detail.rs
 expression: state
 ---
 Complete {

@@ -1,5 +1,5 @@
 ---
-source: src/heart_rate.rs
+source: src/incoming_messages/heart_rate.rs
 expression: rates
 ---
 [

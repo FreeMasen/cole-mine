@@ -35,6 +35,12 @@ SleepData {
                 Light(
                     49,
                 ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    3,
+                ),
             ],
         },
     ],

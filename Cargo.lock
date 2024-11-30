@@ -291,6 +291,7 @@ dependencies = [
  "futures",
  "insta",
  "log",
+ "mock_instant",
  "serde",
  "time",
  "tokio",
@@ -567,6 +568,7 @@ dependencies = [
  "console",
  "lazy_static",
  "linked-hash-map",
+ "regex",
  "similar",
 ]
 
@@ -709,6 +711,12 @@ dependencies = [
  "wasi",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "mock_instant"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdcebb6db83796481097dedc7747809243cc81d9ed83e6a938b76d4ea0b249cf"
 
 [[package]]
 name = "num-conv"

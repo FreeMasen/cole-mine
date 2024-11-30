@@ -1,3 +1,4 @@
+#![allow(unused)]
 use uuid::Uuid;
 
 pub const UART_SERVICE_UUID: Uuid = uuid::uuid!("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e");
@@ -11,6 +12,7 @@ pub const CMD_SET_DATE_TIME: u8 = 0x01;
 pub const CMD_BATTERY: u8 = 0x03;
 pub const CMD_PHONE_NAME: u8 = 0x04;
 pub const CMD_POWER_OFF: u8 = 0x08;
+pub const CMD_BLINK: u8 = 0x10;
 pub const CMD_PREFERENCES: u8 = 0x0a;
 pub const CMD_SYNC_HEART_RATE: u8 = 0x15;
 pub const CMD_AUTO_HR_PREF: u8 = 0x16;

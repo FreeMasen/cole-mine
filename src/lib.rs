@@ -5,10 +5,18 @@ use std::{pin::Pin, time::Duration};
 type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 pub mod client;
-pub mod constants;
-pub mod heart_rate;
-pub mod sport_detail;
-pub mod stress;
+mod constants;
+pub mod incoming_messages;
+mod util;
+
+pub use crate::{
+    client::Client,
+    incoming_messages::{
+        big_data::{self, SleepStage},
+        heart_rate, sport_detail, stress,
+    },
+    util::DurationExt,
+};
 
 pub use bleasy::BDAddr;
 
