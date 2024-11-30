@@ -39,6 +39,7 @@ impl TryFrom<&[u8]> for HeartRateState {
             });
         }
         if value.len() < 15 {
+            log::debug!("Invalid heart rate packet: {value:?}");
             return Err(
                 format!("Packet too short for heart rate data 15 < {}", value.len()).into(),
             );
