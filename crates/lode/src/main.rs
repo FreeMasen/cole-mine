@@ -859,7 +859,7 @@ async fn read_sleep_(client: &mut Client) -> Result {
                         cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
                     };
                     let end = time + Duration::minutes(n);
-                    println!("{}-{}: {name}", 
+                    println!("{}-{}: {n}", 
                         time.format(&fmt),
                         end.format(&fmt),
                     );
@@ -868,4 +868,5 @@ async fn read_sleep_(client: &mut Client) -> Result {
             }
         }
     }
+    Ok(())
 }
