@@ -834,10 +834,11 @@ async fn read_stress(addr: BDAddr, mut day_offset: u8) -> Result {
 async fn read_sleep(addr: BDAddr) -> Result {
     let mut client = Client::new(addr).await?;
     client.connect().await?;
-    if let Err(e) = read_sleep_(&mut client) {
+    if let Err(e) = read_sleep_(&mut client).await {
         eprintln!("Failed to read sleep: {e}");
     }
     client.disconnect().await?;
+    Ok(())
 }
 
 async fn read_sleep_(client: &mut Client) -> Result {
@@ -849,8 +850,8 @@ async fn read_sleep_(client: &mut Client) -> Result {
         if let CommandReply::Sleep(sleep_data) = packet {
             for session in sleep_data.sessions {
                 let mut time = session.start.to_offset(time::UtcOffset::current_local_offset()?);
-                println!("--{}--", time.date().format(&time::format_description::well_known::Rfc3339));
-                let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]").unwrap();
+                println!("--{}--", time.date().format(&time::format_description::well_known::Rfc3339)?);
+                let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
                 for stage in session.stages {
                     let (n, m) = match stage {
                         cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
@@ -858,10 +859,10 @@ async fn read_sleep_(client: &mut Client) -> Result {
                         cole_mine::client::SleepStage::Rem(m) => ("REM", m as u64),
                         cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
                     };
-                    let end = time + Duration::minutes(n);
+                    let end = time + Duration::minutes(m);
                     println!("{}-{}: {n}", 
-                        time.format(&fmt),
-                        end.format(&fmt),
+                        time.format(&fmt)?,
+                        end.format(&fmt)?,
                     );
                     time = end;
                 }
