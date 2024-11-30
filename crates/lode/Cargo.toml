@@ -10,5 +10,5 @@ cole-mine = { version = "0.1.0", path = "../.." }
 env_logger = "0.11.5"
 futures = "0.3.31"
 log = "0.4.22"
-time = { version = "0.3.36", features = ["serde-human-readable", "parsing", "local-offset", "formatting"] }
+time = { version = "0.3.36", features = ["serde-human-readable", "parsing", "local-offset", "formatting", "macros"] }
 tokio = { version = "1.41.1", features = ["full"] }
