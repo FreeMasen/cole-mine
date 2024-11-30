@@ -4,7 +4,6 @@ use cole_mine::client::{Client, Command, CommandReply, DurationExt, SleepSession
 use cole_mine::BDAddr;
 use std::convert::Infallible;
 use std::future::Future;
-use std::process::Output;
 use std::str::FromStr;
 use std::time::Duration;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -260,7 +259,7 @@ async fn set_time(
 }
 
 async fn get_device_details(id: DeviceIdentifier) -> Result {
-    with_client(id, |mut client| async move {
+    with_client(id, |client| async move {
         log::info!("getting device details");
         let details = client.device_details().await?;
         println!(
@@ -514,7 +513,7 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
             start = start
                 .date()
                 .previous_day()
-                .ok_or_else(|| format!("time math...."))?
+                .ok_or("time math....")?
                 .midnight();
         }
 
@@ -558,20 +557,6 @@ async fn read_sleep(id: DeviceIdentifier) -> Result {
         Ok(())
     })
     .await
-}
-
-async fn read_sleep_(client: &mut Client) -> Result {
-    client
-        .send(Command::Raw(vec![0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff]))
-        .await?;
-    while let Some(packet) = client.read_next().await? {
-        if let CommandReply::Sleep(sleep_data) = packet {
-            for session in sleep_data.sessions {
-                report_sleep_session(session)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 fn report_sleep_session(session: SleepSession) -> Result {

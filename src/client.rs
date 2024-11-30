@@ -135,7 +135,7 @@ impl ClientReceiver {
                                 55 => {
                                     log::debug!("Stress reply {:?}", partial_states.stress_state);
                                     if let Some(mut ss) = partial_states.stress_state.take() {
-                                        if ss.step(&ev.as_ref()).is_err() {
+                                        if ss.step(ev.as_ref()).is_err() {
                                             continue;
                                         }
                                         let StressState::Complete { measurements, minutes_appart } = ss else {
@@ -147,7 +147,7 @@ impl ClientReceiver {
                                             measurements,
                                         }
                                     } else {
-                                        partial_states.stress_state = StressState::new(&ev.as_ref()).ok();
+                                        partial_states.stress_state = StressState::new(ev.as_ref()).ok();
                                         continue;
                                     }
                                 }
@@ -301,7 +301,7 @@ impl TryFrom<BigDataPacket> for SleepData {
         let BigDataPacket::Sleep(data) = value else {
             return Err(format!("Invlaid big data packet for sleep: {value:?}").into());
         };
-        let days = data.get(0).copied().unwrap_or_default();
+        let days = data.first().copied().unwrap_or_default();
         log::debug!("trying to parse sleep data with {days} days");
         log::trace!("{:?}", data);
         let mut sessions = Vec::with_capacity(days as _);
@@ -326,7 +326,7 @@ impl TryFrom<BigDataPacket> for SleepData {
                 day.midnight().assume_utc() + Duration::minutes(start as _)
             } else {
                 day.previous_day()
-                    .ok_or_else(|| format!("Invalid day"))?
+                    .ok_or("Invalid day")?
                     .midnight()
                     .assume_utc()
                     + Duration::minutes(start as _)
@@ -419,6 +419,12 @@ impl BigDataPacket {
         self.get_data_ref().len()
     }
 
+    #[allow(unused)]
+    fn is_empty(&self) -> bool {
+        self.get_data_ref().is_empty()
+    }
+
+    #[allow(unused)]
     fn capacity(&self) -> usize {
         self.get_data_ref().capacity()
     }
@@ -438,7 +444,7 @@ impl BigDataPacket {
 
 fn try_u16_from_le_slice(slice: &[u8]) -> Option<u16> {
     let mut bytes = [0u8; 2];
-    bytes.copy_from_slice(&slice.get(0..2)?);
+    bytes.copy_from_slice(slice.get(0..2)?);
     Some(u16::from_le_bytes(bytes))
 }
 
@@ -787,6 +793,12 @@ impl RawPacket {
     pub fn len(&self) -> usize {
         match self {
             RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            RawPacket::Uart(vec) | RawPacket::V2(vec) => vec.is_empty(),
         }
     }
 }
