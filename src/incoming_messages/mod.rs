@@ -42,6 +42,7 @@ impl PacketParser {
     }
 
     fn handle_uart(&mut self, packet: &[u8]) -> Result<Option<CommandReply>> {
+        log::trace!("uart packet: {packet:?}");
         Ok(Some(match packet[0] {
             constants::CMD_SET_DATE_TIME => {
                 log::debug!("SetTime Reply");
@@ -149,7 +150,10 @@ impl PacketParser {
         Ok(Some(
             if let Some(mut s) = self.multi_packet_states.heart_rate_state.take() {
                 log::debug!("Stepping heart rate state");
-                if s.step(&packet[..packet.len() - 1]).is_err() {
+                // We need to trim the checksum byte here because the packet will be offset
+                // if we don't
+                if let Err(e) = s.step(&packet[..packet.len() - 1]) {
+                    log::warn!("failed to step heart rate: {e}");
                     return Ok(None);
                 }
                 let HeartRateState::Complete { date, range, rates } = s else {
@@ -218,7 +222,10 @@ impl futures::Stream for ClientReceiver {
         let Some(packet) = inner else {
             return std::task::Poll::Ready(None);
         };
-        std::task::Poll::Ready(self.parser.handle_packet(&packet))
+        if let Some(packet) = self.parser.handle_packet(&packet) {
+            return std::task::Poll::Ready(Some(packet))
+        }
+        std::task::Poll::Pending
     }
 }
 
