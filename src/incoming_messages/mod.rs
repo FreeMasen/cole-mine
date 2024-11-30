@@ -153,17 +153,21 @@ impl PacketParser {
                     return Ok(None);
                 }
                 let HeartRateState::Complete { date, range, rates } = s else {
+                    log::debug!("heart rate incomplete, waiting for remaining data: {s:?}");
                     self.multi_packet_states.heart_rate_state = Some(s);
                     return Ok(None);
                 };
                 log::debug!("hear rate state complete");
                 CommandReply::HeartRate(HeartRate { range, rates, date })
             } else {
+                log::debug!("Initial heart rate packet");
                 match HeartRateState::try_from(packet) {
                     Ok(HeartRateState::Complete { date, range, rates }) => {
+                        log::trace!("First packet was only packet for heart rate data");
                         CommandReply::HeartRate(HeartRate { range, rates, date })
                     }
                     Ok(other) => {
+                        log::trace!("First packet incomplete, waiting for remaining bytes: {other:?}");
                         self.multi_packet_states.heart_rate_state = Some(other);
                         return Ok(None);
                     }
