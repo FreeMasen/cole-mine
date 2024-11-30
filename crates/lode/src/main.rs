@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use cole_mine::client::{Client, Command, CommandReply, DurationExt};
+use cole_mine::client::{Client, Command, CommandReply, DurationExt, SleepSession};
 
 use cole_mine::BDAddr;
 use std::time::Duration;
@@ -849,25 +849,59 @@ async fn read_sleep_(client: &mut Client) -> Result {
     while let Some(packet) = client.read_next().await? {
         if let CommandReply::Sleep(sleep_data) = packet {
             for session in sleep_data.sessions {
-                let mut time = session.start.to_offset(time::UtcOffset::current_local_offset()?);
-                println!("--{}--", time.date().format(&time::format_description::well_known::Rfc3339)?);
-                let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
-                for stage in session.stages {
-                    let (n, m) = match stage {
-                        cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
-                        cole_mine::client::SleepStage::Deep(m) => ("Deep", m as u64),
-                        cole_mine::client::SleepStage::Rem(m) => ("REM", m as u64),
-                        cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
-                    };
-                    let end = time + Duration::minutes(m);
-                    println!("{}-{}: {n}", 
-                        time.format(&fmt)?,
-                        end.format(&fmt)?,
-                    );
-                    time = end;
-                }
+                report_sleep_session(session)?;
             }
         }
     }
     Ok(())
+}
+
+fn report_sleep_session(session: SleepSession) -> Result {
+    let mut time = session.start.to_offset(time::UtcOffset::current_local_offset().or_else(|_| time::UtcOffset::from_hms(-6, 0, 0))?);
+    println!("--{}--", time.date().format(&time::macros::format_description!("[year]-[month]-[day]"))?);
+    let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    for stage in session.stages {
+        let (n, m) = match stage {
+            cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
+            cole_mine::client::SleepStage::Deep(m) => ("Deep", m as u64),
+            cole_mine::client::SleepStage::Rem(m) => ("REM", m as u64),
+            cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
+        };
+        let end = time + Duration::minutes(m);
+        println!("{}-{} ({m}): {n}", 
+            time.format(fmt)?,
+            end.format(fmt)?,
+        );
+        time = end;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use cole_mine::client::SleepStage;
+    use time::{Date, Time};
+
+    use super::*;
+
+    #[test]
+    fn report_sleep_session_works() {
+        let session = SleepSession {
+            start: OffsetDateTime::new_utc(
+                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(), 
+                Time::from_hms(4, 25, 0).unwrap(),
+            ),
+            end: OffsetDateTime::new_utc(
+                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(),
+                Time::from_hms(5, 25, 0).unwrap(),
+            ),
+            stages: vec![
+                SleepStage::Light(15),
+                SleepStage::Awake(15),
+                SleepStage::Deep(15),
+                SleepStage::Rem(15),
+            ],
+        };
+        report_sleep_session(session).unwrap()
+    }
 }
