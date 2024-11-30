@@ -326,14 +326,14 @@ pub enum BigDataPacket {
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SleepData {
-    sessions: Vec<SleepSession>,
+    pub sessions: Vec<SleepSession>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SleepSession {
-    start: OffsetDateTime,
-    end: OffsetDateTime,
-    stages: Vec<SleepStage>,
+    pub start: OffsetDateTime,
+    pub end: OffsetDateTime,
+    pub stages: Vec<SleepStage>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]

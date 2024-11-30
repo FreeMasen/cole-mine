@@ -1,8 +1,5 @@
 use clap::{Parser, Subcommand};
-use cole_mine::{
-    client::Client,
-    client::{Command, CommandReply},
-};
+use cole_mine::client::{Client, Command, CommandReply, DurationExt};
 
 use cole_mine::BDAddr;
 use std::time::Duration;
@@ -127,11 +124,19 @@ enum SendCommand {
         #[cfg(not(target_os = "macos"))]
         addr: BDAddr,
     },
+    SendCommand::GetSleep {
+        addr: BDAddr,
+    },
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result {
     env_logger::init();
+    if std::env::var("LODE_SET_SOUND_LOCAL_OFFSET").map(|v| v == "1").unwrap_or_default() {
+        unsafe {
+            time::util::local_offset::set_soundness(time::util::local_offset::Soundness::Sound);
+        }
+    }
     match Commands::parse() {
         Commands::FindRings { see_all } => find_rings(see_all).await,
         Commands::Goals { addr } => read_goals(addr).await,
@@ -310,6 +315,11 @@ async fn send_command(cmd: SendCommand) -> Result {
             {
                 blink(addr).await
             }
+        },
+        SendCommand::GetSleep {
+            addr
+        } => {
+            read_sleep(addr).await
         }
     }
 }
@@ -819,4 +829,43 @@ async fn read_stress(addr: BDAddr, mut day_offset: u8) -> Result {
     }
     client.disconnect().await?;
     ret
+}
+
+async fn read_sleep(addr: BDAddr) -> Result {
+    let mut client = Client::new(addr).await?;
+    client.connect().await?;
+    if let Err(e) = read_sleep_(&mut client) {
+        eprintln!("Failed to read sleep: {e}");
+    }
+    client.disconnect().await?;
+}
+
+async fn read_sleep_(client: &mut Client) -> Result {
+    
+    client.send(Command::Raw(vec![
+        0xbc, 0x27, 0x01, 0x00, 0xff, 0x00, 0xff
+    ])).await?;
+    while let Some(packet) = client.read_next().await? {
+        if let CommandReply::Sleep(sleep_data) = packet {
+            for session in sleep_data.sessions {
+                let mut time = session.start.to_offset(time::UtcOffset::current_local_offset()?);
+                println!("--{}--", time.date().format(&time::format_description::well_known::Rfc3339));
+                let fmt = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]").unwrap();
+                for stage in session.stages {
+                    let (n, m) = match stage {
+                        cole_mine::client::SleepStage::Light(m) => ("Light", m as u64),
+                        cole_mine::client::SleepStage::Deep(m) => ("Deep", m as u64),
+                        cole_mine::client::SleepStage::Rem(m) => ("REM", m as u64),
+                        cole_mine::client::SleepStage::Awake(m) => ("Awake", m as u64),
+                    };
+                    let end = time + Duration::minutes(n);
+                    println!("{}-{}: {name}", 
+                        time.format(&fmt),
+                        end.format(&fmt),
+                    );
+                    time = end;
+                }
+            }
+        }
+    }
 }
