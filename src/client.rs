@@ -53,7 +53,9 @@ impl Client {
 
     pub async fn disconnect(&mut self) -> Result {
         self.device.disconnect().await?;
-        self.rx = None;
+        if let Some(rx) = self.rx.take() {
+            rx.disconnect().await?
+        }
         Ok(())
     }
 

@@ -34,9 +34,9 @@ pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> 
 }
 
 pub async fn discover_by_name(name: String) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
+    log::trace!("discover_by_name: `{name}`");
     let config = ScanConfig::default()
-        .filter_by_name(move |n| n == name)
-        .force_disconnect(true);
+        .filter_by_name(move |n| n == name);
     discover_(config).await
 }
 

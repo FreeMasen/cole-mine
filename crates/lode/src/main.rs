@@ -184,7 +184,11 @@ async fn find_rings(see_all: bool) -> Result {
     log::info!("Finding rings");
     let mut stream = cole_mine::discover(see_all).await?;
     while let Some(dev) = stream.next().await {
-        println!("{}", dev.address());
+        print!("{}", dev.address());
+        if let Some(name) = dev.local_name().await {
+            print!(": {name}")
+        }
+        println!("");
     }
     Ok(())
 }
@@ -320,7 +324,7 @@ async fn read_sport_details(id: DeviceIdentifier, day_offset: u8) -> Result {
 
 async fn read_heart_rate(id: DeviceIdentifier, date: time::Date) -> Result {
     with_client(id, |mut client| async move {
-        log::info!("getting hear rate");
+        log::info!("getting heart rate");
         let target = date.midnight().assume_utc();
         let timestamp = target.unix_timestamp();
         client
@@ -625,11 +629,15 @@ where
     F: Fn(Client) -> G + 'a,
     G: Future<Output = Result> + 'a,
 {
+    log::trace!("Getting client for id: {id:?}");
     let mut client = get_client(id).await?;
+    log::trace!("Connecting client");
     client.connect().await?;
     let device = client.device.clone();
     let ret = cb(client).await;
+    log::trace!("disconnecting client");
     device.disconnect().await?;
+    log::trace!("operation success: {}", ret.is_ok());
     ret
 }
 

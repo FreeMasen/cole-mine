@@ -210,7 +210,7 @@ impl TryFrom<BigDataPacket> for OxygenData {
                 "Error, attempt to parse oxygen data with wron packet: {value:?}"
             ));
         };
-        let mut iter = data.iter().copied();
+        let mut iter = data.iter().copied().peekable();
 
         let day_in_packet = iter.next().ok_or_else(|| format!("Packet sized 7"))?;
         let mut samples = Vec::new();
@@ -233,6 +233,9 @@ impl TryFrom<BigDataPacket> for OxygenData {
                     min,
                     when: hour,
                 });
+                if iter.peek().is_none() {
+                    break;
+                }
             }
         }
         Ok(Self { samples })

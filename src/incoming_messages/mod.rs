@@ -5,7 +5,7 @@ use std::{
 };
 
 use big_data::{BigDataState, OxygenData, SleepData};
-use bleasy::Device;
+use bleasy::{Characteristic, Device};
 use futures::{Stream, StreamExt};
 use heart_rate::{HeartRate, HeartRateState};
 use sport_detail::{SportDetail, SportDetailState};
@@ -21,6 +21,7 @@ use crate::{constants, Result};
 pub struct ClientReceiver {
     stream: Pin<Box<dyn Stream<Item = RawPacket>>>,
     parser: PacketParser,
+    charas: Vec<Characteristic>,
 }
 
 #[derive(Debug, Default)]
@@ -158,7 +159,7 @@ impl PacketParser {
                 log::debug!("hear rate state complete");
                 CommandReply::HeartRate(HeartRate { range, rates, date })
             } else {
-                match HeartRateState::try_from(&packet[1..packet.len() - 1]) {
+                match HeartRateState::try_from(packet) {
                     Ok(HeartRateState::Complete { date, range, rates }) => {
                         CommandReply::HeartRate(HeartRate { range, rates, date })
                     }
@@ -256,6 +257,7 @@ pub enum RealTimeEvent {
 impl ClientReceiver {
     pub async fn connect_device(device: &Device) -> Result<Self> {
         let mut streams = Vec::with_capacity(2);
+        let mut charas = Vec::with_capacity(2);
         for s in device.services().await? {
             if s.uuid() == crate::constants::UART_SERVICE_UUID {
                 for ch in s.characteristics() {
@@ -264,6 +266,7 @@ impl ClientReceiver {
                         let stream: Pin<Box<dyn Stream<Item = RawPacket>>> =
                             Box::pin(stream.map(RawPacket::Uart));
                         streams.push(stream);
+                        charas.push(ch);
                     }
                 }
             }
@@ -274,21 +277,31 @@ impl ClientReceiver {
                         let stream: Pin<Box<dyn Stream<Item = RawPacket>>> =
                             Box::pin(stream.map(RawPacket::V2));
                         streams.push(stream);
+                        charas.push(ch);
                     }
                 }
             }
         }
-
-        Ok(Self::from_stream(Box::pin(futures::stream::select_all(
+        let mut ret = Self::from_stream(Box::pin(futures::stream::select_all(
             streams,
-        ))))
+        )));
+        ret.charas = charas;
+        Ok(ret)
     }
 
     pub fn from_stream(stream: Pin<Box<dyn Stream<Item = RawPacket>>>) -> Self {
         ClientReceiver {
             stream,
             parser: PacketParser::default(),
+            charas: Default::default(),
         }
+    }
+
+    pub async fn disconnect(&self) -> Result {
+        for ch in &self.charas {
+            ch.unsubscribe().await?;
+        }
+        Ok(())
     }
 }
 
