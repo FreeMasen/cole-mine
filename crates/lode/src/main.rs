@@ -552,6 +552,7 @@ async fn read_sleep(id: DeviceIdentifier) -> Result {
                 for session in sleep_data.sessions {
                     report_sleep_session(session)?;
                 }
+                break;
             }
         }
         Ok(())
