@@ -1,0 +1,49 @@
+---
+source: src/client.rs
+assertion_line: 433
+expression: sleep_data
+snapshot_kind: text
+---
+SleepData {
+    sessions: [
+        SleepSession {
+            start: 2024-11-26 2:57:00.0,
+            end: 2024-11-27 8:43:00.0,
+            stages: [
+                Light(
+                    67,
+                ),
+                Deep(
+                    35,
+                ),
+                Light(
+                    15,
+                ),
+                Rem(
+                    34,
+                ),
+                Light(
+                    95,
+                ),
+                Deep(
+                    16,
+                ),
+                Light(
+                    1,
+                ),
+                Awake(
+                    13,
+                ),
+                Light(
+                    49,
+                ),
+                Deep(
+                    18,
+                ),
+                Light(
+                    3,
+                ),
+            ],
+        },
+    ],
+}

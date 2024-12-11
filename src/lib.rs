@@ -20,9 +20,10 @@ pub use crate::{
 
 pub use bleasy::BDAddr;
 
-pub async fn discover(all: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
+pub async fn discover(all: bool, force_disconnect: bool) -> Result<Pin<Box<dyn Stream<Item = Device>>>> {
     log::trace!("discover({all})");
-    let mut config = ScanConfig::default();
+    let mut config = ScanConfig::default().force_disconnect(force_disconnect);
+    
     if !all {
         config = config.filter_by_name(|n| {
             crate::constants::DEVICE_NAME_PREFIXES

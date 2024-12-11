@@ -4,6 +4,7 @@ use cole_mine::client::Command;
 use cole_mine::{incoming_messages::CommandReply, Client, DurationExt};
 
 use cole_mine::BDAddr;
+use time::macros::format_description;
 use std::convert::Infallible;
 use std::future::Future;
 use std::str::FromStr;
@@ -14,6 +15,8 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser)]
 enum Commands {
+    /// Determine what BTLE adapters are available
+    FindAdapters,
     /// Scan for devices.
     FindRings {
         /// If provided, all device addresses are printed to the terminal not just
@@ -22,6 +25,10 @@ enum Commands {
         /// note: on MacOS addresses may be all zeros unless this is a signed .app
         #[arg(short = 'a', long = "all")]
         see_all: bool,
+        /// If the scan should try and force devices to disconnect from a current
+        /// connection
+        #[arg(short = 'f', long = "force-disconnect")]
+        force_disconnect: bool,
     },
     Goals {
         addr: BDAddr,
@@ -80,6 +87,8 @@ enum SendCommand {
     },
     ReadHeartRate {
         id: DeviceIdentifier,
+        #[arg(short = 'd', long = "date")]
+        date: Option<String>,
     },
     ReadBatteryInfo {
         id: DeviceIdentifier,
@@ -128,20 +137,39 @@ impl FromStr for DeviceIdentifier {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result {
     env_logger::init();
-    if std::env::var("LODE_SET_SOUND_LOCAL_OFFSET")
+    if std::env::var("LODE_SET_UNSOUND_LOCAL_OFFSET")
         .map(|v| v == "1")
         .unwrap_or_default()
     {
         unsafe {
-            time::util::local_offset::set_soundness(time::util::local_offset::Soundness::Sound);
+            time::util::local_offset::set_soundness(time::util::local_offset::Soundness::Unsound);
         }
     }
     match Commands::parse() {
-        Commands::FindRings { see_all } => find_rings(see_all).await,
+        Commands::FindAdapters => find_adapters().await,
+        Commands::FindRings { see_all, force_disconnect } => find_rings(see_all, force_disconnect).await,
         Commands::Goals { addr } => read_goals(addr).await,
         Commands::DeviceDetails { id } => get_device_details(id).await,
         Commands::SendCommand(cmd) => send_command(cmd).await,
     }
+}
+
+async fn find_adapters() -> Result {
+    use btleplug::api::{Manager as _, Central as _};
+    use btleplug::platform::Manager;
+
+    let manager = Manager::new().await?;
+    let adapter_list = manager.adapters().await?;
+    if adapter_list.is_empty() {
+        println!("No Bluetooth adapters");
+        return Ok(())
+    }
+    for (idx, adapter) in adapter_list.into_iter().enumerate() {
+        let info = adapter.adapter_info().await?;
+        let state = adapter.adapter_state().await?;
+        println!("{idx}: {info} {state:?}");
+    }
+    Ok(())
 }
 
 async fn send_command(cmd: SendCommand) -> Result {
@@ -162,8 +190,15 @@ async fn send_command(cmd: SendCommand) -> Result {
             chinese,
         } => set_time(id, minutes, hours, days, years, chinese).await,
         SendCommand::ReadSportDetail { id, day_offset } => read_sport_details(id, day_offset).await,
-        SendCommand::ReadHeartRate { id } => {
-            read_heart_rate(id, OffsetDateTime::now_utc().date().previous_day().unwrap()).await
+        SendCommand::ReadHeartRate { id, date } => {
+            let date = if let Some(date) = date {
+                time::Date::parse(&date, time::macros::format_description!("[year]-[month]-[day]"))?
+            } else {
+                OffsetDateTime::now_local().unwrap_or_else(|_| {
+                    OffsetDateTime::now_utc()
+                }).date()
+            };
+            read_heart_rate(id, date).await
         }
         SendCommand::ReadBatteryInfo { id } => read_battery_info(id).await,
         SendCommand::GetHeartRateSettings { id } => read_hr_config(id).await,
@@ -179,10 +214,10 @@ async fn send_command(cmd: SendCommand) -> Result {
     }
 }
 
-async fn find_rings(see_all: bool) -> Result {
+async fn find_rings(see_all: bool, force_disconnect: bool) -> Result {
     use futures::StreamExt;
     log::info!("Finding rings");
-    let mut stream = cole_mine::discover(see_all).await?;
+    let mut stream = cole_mine::discover(see_all, force_disconnect).await?;
     while let Some(dev) = stream.next().await {
         print!("{}", dev.address());
         if let Some(name) = dev.local_name().await {
@@ -216,7 +251,9 @@ async fn set_time(
     const MINUTE: u64 = 60;
     const HOUR: u64 = MINUTE * 60;
     const DAY: u64 = HOUR * 24;
-    let mut now = OffsetDateTime::now_utc();
+    let mut now = OffsetDateTime::now_local().unwrap_or_else(|_| {
+        OffsetDateTime::now_utc()
+    });
     if let Some(minutes) = minutes {
         let (dur, add) = get_duration(MINUTE, minutes);
         if add {
@@ -339,7 +376,7 @@ async fn read_heart_rate(id: DeviceIdentifier, date: time::Date) -> Result {
         )
         .await?
         {
-            let mut time = if let Ok(now) = OffsetDateTime::now_local() {
+            let time = if let Ok(now) = OffsetDateTime::now_local() {
                 let local_offset = now.offset();
                 target.replace_offset(local_offset)
             } else {
@@ -352,9 +389,15 @@ async fn read_heart_rate(id: DeviceIdentifier, date: time::Date) -> Result {
                 target.day(),
                 hr.range
             );
+            let mut minute = time;
             for rate in hr.rates {
-                println!("  {:02}:{:02} {:>3}", time.hour(), time.minute(), rate);
-                time += Duration::from_secs(60 * 5);
+                println!("  {:} {:>3}", 
+                    minute.format(format_description!("[hour repr:12]:[minute] [period]")).unwrap()
+                , rate);
+                minute += Duration::from_secs(60 * 5);
+                if time.date() != minute.date() {
+                    break;
+                }
             }
         }
         Ok(())
@@ -517,7 +560,10 @@ async fn blink(id: DeviceIdentifier) -> Result {
 async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
     log::info!("getting stress details");
     with_client(id, |mut client| async move {
-        let mut start = OffsetDateTime::now_utc().date().midnight();
+        let mut start = OffsetDateTime::now_local().unwrap_or_else(|_| { 
+            log::warn!("Failed to get local time, falling back to UTC");
+            OffsetDateTime::now_utc()
+        }).date().midnight();
         while day_offset > 0 {
             day_offset -= 1;
             start = start
@@ -527,26 +573,43 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
                 .midnight();
         }
 
-        let ret = client.send(Command::ReadStress { day_offset }).await;
-        if ret.is_ok() {
-            while let Ok(Some(CommandReply::Stress {
-                time_interval_sec,
-                measurements,
-            })) = client.read_next().await
-            {
-                let minutes_in_a_day = 24 * 60;
-                let segments = time_interval_sec / minutes_in_a_day;
-                for i in 0..segments as u64 {
-                    let time = start + Duration::from_secs(time_interval_sec as u64 * i);
-                    println!(
-                        "{}: {}",
-                        time.format(&time::format_description::well_known::Rfc3339)
-                            .unwrap(),
-                        &measurements[i as usize]
-                    )
-                }
-            }
+        client.send(Command::ReadStress { day_offset }).await?;
+        let Some(CommandReply::Stress {
+            time_interval_sec,
+            measurements,
+        } ) = wait_for_reply(&mut client, |r| matches!(r, CommandReply::Stress { .. }), "stress").await? else {
+            return Err("Failed to get stress response".into())
+        };
+        let minutes_in_a_day = 24 * 60;
+        let segments = time_interval_sec as u32 / minutes_in_a_day;
+        for i in 0..segments as u64 {
+            let time = start + Duration::from_secs(time_interval_sec as u64 * i);
+            println!(
+                "{}: {}",
+                time.format(&time::format_description::well_known::Rfc3339)
+                    .unwrap(),
+                &measurements[i as usize]
+            )
         }
+        // if ret.is_ok() {
+        //     while let Ok(Some(CommandReply::Stress {
+        //         time_interval_sec,
+        //         measurements,
+        //     })) = client.read_next().await
+        //     {
+        //         let minutes_in_a_day = 24 * 60;
+        //         let segments = time_interval_sec as u32 / minutes_in_a_day;
+        //         for i in 0..segments as u64 {
+        //             let time = start + Duration::from_secs(time_interval_sec as u64 * i);
+        //             println!(
+        //                 "{}: {}",
+        //                 time.format(&time::format_description::well_known::Rfc3339)
+        //                     .unwrap(),
+        //                 &measurements[i as usize]
+        //             )
+        //         }
+        //     }
+        // }
         Ok(())
     })
     .await
@@ -589,9 +652,7 @@ async fn read_oxygen(id: DeviceIdentifier) -> Result {
 }
 
 fn report_sleep_session(session: SleepSession) -> Result {
-    let mut time = session.start.to_offset(
-        time::UtcOffset::current_local_offset().or_else(|_| time::UtcOffset::from_hms(-6, 0, 0))?,
-    );
+    let mut time = session.start;
     println!(
         "--{}--",
         time.date()
@@ -614,14 +675,22 @@ fn report_sleep_session(session: SleepSession) -> Result {
 }
 
 fn report_oxygen_info(oxy: OxygenMeasurement) {
-    println!(
-        "{}: {}-{}, ±{} ~{:.02}",
-        oxy.when.format(time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]")).unwrap(),
-        oxy.min,
-        oxy.max,
-        oxy.min.max(oxy.max) - oxy.min.min(oxy.max),
-        (oxy.min + oxy.max) as f32 / 2.0,
-    )
+    if oxy.min == 0 && oxy.max == 0 {
+        return;
+    }
+    print!("{}:", oxy.when.format(time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]")).unwrap());
+    if oxy.max == 0 || oxy.min == 0 {
+        let v = oxy.max.max(oxy.min);
+        print!("{v:>7} ±  0 ~{:.02}", v as f32);
+    } else {
+        print!("{:>3}-{:<3} ±{:>3} ~{:.02}",
+            oxy.min,
+            oxy.max,
+            oxy.min.max(oxy.max) - oxy.min.min(oxy.max),
+            (oxy.min + oxy.max) as f32 / 2.0,
+        );
+    }
+    println!("")
 }
 
 async fn with_client<'a, F, G>(id: DeviceIdentifier, cb: F) -> Result
@@ -633,6 +702,7 @@ where
     let mut client = get_client(id).await?;
     log::trace!("Connecting client");
     client.connect().await?;
+    log::debug!("client connected");
     let device = client.device.clone();
     let ret = cb(client).await;
     log::trace!("disconnecting client");
@@ -664,33 +734,4 @@ async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
         }
     }
     Err("Undable to find device by name".to_string().into())
-}
-
-#[cfg(test)]
-mod tests {
-    use cole_mine::SleepStage;
-    use time::{Date, Time};
-
-    use super::*;
-
-    #[test]
-    fn report_sleep_session_works() {
-        let session = SleepSession {
-            start: OffsetDateTime::new_utc(
-                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(),
-                Time::from_hms(4, 25, 0).unwrap(),
-            ),
-            end: OffsetDateTime::new_utc(
-                Date::from_calendar_date(2001, time::Month::January, 31).unwrap(),
-                Time::from_hms(5, 25, 0).unwrap(),
-            ),
-            stages: vec![
-                SleepStage::Light(15),
-                SleepStage::Awake(15),
-                SleepStage::Deep(15),
-                SleepStage::Rem(15),
-            ],
-        };
-        report_sleep_session(session).unwrap()
-    }
 }

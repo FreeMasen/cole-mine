@@ -1,6 +1,6 @@
 use std::{fmt::Display, time::Duration};
 
-use time::{OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::{
     constants,
@@ -30,8 +30,8 @@ pub struct SleepData {
 
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SleepSession {
-    pub start: OffsetDateTime,
-    pub end: OffsetDateTime,
+    pub start: PrimitiveDateTime,
+    pub end: PrimitiveDateTime,
     pub stages: Vec<SleepStage>,
 }
 
@@ -60,30 +60,29 @@ impl TryFrom<BigDataPacket> for SleepData {
         }
 
         let mut iter = data[1..].iter().copied();
-        let today = OffsetDateTime::now_utc().date();
+        let now = OffsetDateTime::now_local().unwrap_or_else(|_|OffsetDateTime::now_utc());
+        let today = now.date();
         for i in 1..days {
             let days_ago = iter.next().ok_or_else(too_short_error(i, "days ago"))?;
             log::trace!("handling day {days_ago} days in the past");
-            let day = today - Duration::days(days_ago as _);
+            let day = today - Duration::days(days_ago as u64 - 1);
             log::trace!("{day:?}");
             let day_bytes = iter.next().ok_or_else(too_short_error(i, "day bytes"))?;
             log::trace!("day bytes: {day_bytes}");
             let start = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "start"))?;
             let end = try_u16_from_iter(&mut iter).ok_or_else(too_short_error(i, "end"))?;
             let start = if start > end {
-                day.midnight().assume_utc() + Duration::minutes(start as _)
+                println!("{} {}", start, (start as i32) - 1440);
+                day.midnight() - Duration::minutes(1440 - start as u64)
             } else {
                 day.previous_day()
                     .ok_or("Invalid day")?
                     .midnight()
-                    .assume_utc()
                     + Duration::minutes(start as _)
             };
-            let end = day.midnight().assume_utc() + Duration::minutes(end as _);
+            let end = day.midnight() + Duration::minutes(end as _);
             log::debug!(
-                "sleep session {:?}-{:?}",
-                start.to_offset(UtcOffset::from_hms(-6, 0, 0).unwrap()),
-                end.to_offset(UtcOffset::from_hms(-6, 0, 0).unwrap())
+                "sleep session {start:?}-{end:?}",
             );
             let mut stages = Vec::new();
             let mut remaining_bytes = day_bytes - 4;
@@ -124,7 +123,7 @@ impl BigDataState {
         if bytes[0] != crate::constants::CMD_BIG_DATA_V2 {
             return Err(format!("Invalid bytes for bigdata state: {bytes:?}").into());
         }
-        println!("with bytes {}", bytes.len());
+        log::debug!("with bytes {}", bytes.len());
         let target_length = try_u16_from_le_slice(&bytes[2..4]).unwrap() as usize;
         let data = Vec::with_capacity(target_length);
         let tag = bytes[1];
@@ -135,7 +134,7 @@ impl BigDataState {
             } else if bytes[1] == constants::BIG_DATA_TYPE_SPO2 {
                 BigDataPacket::Oxygen(data)
             } else {
-                panic!("Unknown big data type: {bytes:?}")
+                return Err(format!("Unknown big data type: {bytes:?}").into())
             },
         };
         ret.step(&bytes[6..])?;
@@ -199,7 +198,7 @@ pub struct OxygenData {
 pub struct OxygenMeasurement {
     pub min: u8,
     pub max: u8,
-    pub when: OffsetDateTime,
+    pub when: PrimitiveDateTime,
 }
 
 impl TryFrom<BigDataPacket> for OxygenData {
@@ -214,12 +213,13 @@ impl TryFrom<BigDataPacket> for OxygenData {
 
         let day_in_packet = iter.next().ok_or_else(|| format!("Packet sized 7"))?;
         let mut samples = Vec::new();
-        let today = OffsetDateTime::now_utc().date().midnight().assume_utc();
+        let now = OffsetDateTime::now_local().unwrap_or_else(|_|OffsetDateTime::now_utc());
+        let today = now.date().midnight();
         for i in 0..day_in_packet {
             let days_ago = iter
                 .next()
                 .ok_or_else(|| format!("Error, days ago for day {i} was none"))?;
-            let day = today - Duration::minutes(days_ago as _);
+            let day = today - Duration::days(days_ago as u64);
             for j in 0..24 {
                 let hour = day + Duration::hours(j);
                 let min = iter.next().ok_or_else(|| {
@@ -239,5 +239,18 @@ impl TryFrom<BigDataPacket> for OxygenData {
             }
         }
         Ok(Self { samples })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use time::OffsetDateTime;
+
+    #[test]
+    fn platform_can_get_local_time() {
+        unsafe {
+            time::util::local_offset::set_soundness(time::util::local_offset::Soundness::Unsound);
+        }
+        dbg!(OffsetDateTime::now_local()).unwrap();
     }
 }

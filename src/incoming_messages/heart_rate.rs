@@ -1,11 +1,11 @@
 use crate::Result;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 #[derive(Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct HeartRate {
     pub range: u8,
     pub rates: Vec<u8>,
-    pub date: OffsetDateTime,
+    pub date: PrimitiveDateTime,
 }
 
 #[derive(Debug)]
@@ -15,7 +15,7 @@ pub enum HeartRateState {
         range: u8,
     },
     Recieving {
-        date: OffsetDateTime,
+        date: PrimitiveDateTime,
         size: u8,
         range: u8,
         rates: Vec<u8>,
@@ -23,7 +23,7 @@ pub enum HeartRateState {
     Complete {
         range: u8,
         rates: Vec<u8>,
-        date: OffsetDateTime,
+        date: PrimitiveDateTime,
     },
 }
 
@@ -34,7 +34,7 @@ impl TryFrom<&[u8]> for HeartRateState {
         if value[1] == 255 {
             return Ok(Self::Complete {
                 rates: Vec::new(),
-                date: OffsetDateTime::from_unix_timestamp(0)?,
+                date: PrimitiveDateTime::MIN,
                 range: 0,
             });
         }
@@ -89,14 +89,16 @@ impl HeartRateState {
         let mut timestamp_bytes = [0u8; 4];
         timestamp_bytes.copy_from_slice(&packet[2..6]);
         let timestamp_int = u32::from_le_bytes(timestamp_bytes);
-        let timestamp = OffsetDateTime::from_unix_timestamp(timestamp_int as _)?;
+        println!("wire: {timestamp_int}\n utc: {}\n lcl: {}", OffsetDateTime::now_utc().unix_timestamp(), OffsetDateTime::now_local().map(|d| d.unix_timestamp()).unwrap_or_default());
+        let base_date = OffsetDateTime::from_unix_timestamp(timestamp_int as _)?;
+        let date = PrimitiveDateTime::new(base_date.date(), base_date.time());
         let mut rates = Vec::with_capacity(size as usize * 13);
         for &byte in &packet[6..15] {
             rates.push(byte);
         }
         Ok(Self::Recieving {
             range,
-            date: timestamp,
+            date,
             rates,
             size,
         })
@@ -105,7 +107,7 @@ impl HeartRateState {
     fn step_receiving(
         size: u8,
         range: u8,
-        date: OffsetDateTime,
+        date: PrimitiveDateTime,
         mut rates: Vec<u8>,
         packet: &[u8],
     ) -> Result<Self> {
@@ -184,7 +186,7 @@ mod tests {
         assert_eq!(range, 5);
         assert_eq!(
             date,
-            OffsetDateTime::new_utc(
+            PrimitiveDateTime::new(
                 Date::from_calendar_date(2024, time::Month::August, 10).unwrap(),
                 Time::from_hms(0, 0, 0).unwrap()
             )

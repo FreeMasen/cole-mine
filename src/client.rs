@@ -63,7 +63,8 @@ impl Client {
         log::trace!("sending {command:?}");
         let cmd_bytes: [u8; 16] = command.into();
         log::trace!("serialized: {cmd_bytes:?}");
-        if cmd_bytes[0] == crate::constants::CMD_BIG_DATA_V2 {
+        if cmd_bytes[0] == crate::constants::CMD_BIG_DATA_V2
+        || cmd_bytes[0] == crate::constants::CMD_NOTIFICATION {
             self.tx2.write_command(&cmd_bytes).await?;
         } else {
             self.tx.write_command(&cmd_bytes).await?;
@@ -124,12 +125,6 @@ impl Client {
 
     pub async fn device_details(&self) -> Result<DeviceDetails> {
         let services = self.device.services().await?;
-        for service in &services {
-            println!("{}", service.uuid());
-            for char in service.characteristics() {
-                println!("  {}", char.uuid());
-            }
-        }
         let service = services
             .into_iter()
             .find(|s| s.uuid() == crate::constants::DEVICE_INFO_UUID)
@@ -233,7 +228,7 @@ impl From<Command> for [u8; 16] {
             }
             Command::SetTime { when, language } => {
                 ret[0..8].copy_from_slice(&[
-                    1,
+                    constants::CMD_SET_DATE_TIME,
                     // 2 digit year...
                     (when.year().unsigned_abs() % 2000) as u8,
                     when.month().into(),
@@ -255,18 +250,18 @@ impl From<Command> for [u8; 16] {
                 ret[1] = constants::BIG_DATA_TYPE_SLEEP;
                 ret[2] = 1;
                 ret[3] = 0;
-                ret[3] = 0xff;
-                ret[3] = 0;
-                ret[3] = 0xff;
+                ret[4] = 0xff;
+                ret[5] = 0;
+                ret[6] = 0xff;
             }
             Command::SyncOxygen => {
                 ret[0] = constants::CMD_BIG_DATA_V2;
                 ret[1] = constants::BIG_DATA_TYPE_SPO2;
                 ret[2] = 1;
                 ret[3] = 0;
-                ret[3] = 0xff;
-                ret[3] = 0;
-                ret[3] = 0xff;
+                ret[4] = 0xff;
+                ret[5] = 0;
+                ret[6] = 0xff;
             }
             Command::Raw(mut bytes) => {
                 if bytes.len() > 15 {

@@ -4,15 +4,17 @@ use std::{
     pin::Pin,
 };
 
-use big_data::{BigDataState, OxygenData, SleepData};
+use big_data::{BigDataPacket, BigDataState, OxygenData, SleepData};
 use bleasy::{Characteristic, Device};
 use futures::{Stream, StreamExt};
 use heart_rate::{HeartRate, HeartRateState};
+use notification::Notification;
 use sport_detail::{SportDetail, SportDetailState};
 use stress::StressState;
 
 pub mod big_data;
 pub mod heart_rate;
+pub mod notification;
 pub mod sport_detail;
 pub mod stress;
 
@@ -31,6 +33,7 @@ struct PacketParser {
 
 impl PacketParser {
     fn handle_packet(&mut self, packet: &RawPacket) -> Option<CommandReply> {
+        log::trace!("handle_packet: {packet:?}");
         match packet {
             RawPacket::Uart(inner) => self.handle_uart(inner),
             RawPacket::V2(inner) => self.handle_v2(inner),
@@ -44,6 +47,9 @@ impl PacketParser {
     fn handle_uart(&mut self, packet: &[u8]) -> Result<Option<CommandReply>> {
         log::trace!("uart packet: {packet:?}");
         Ok(Some(match packet[0] {
+            constants::CMD_NOTIFICATION => {
+                CommandReply::Notification(Notification::try_from(packet)?)
+            }
             constants::CMD_SET_DATE_TIME => {
                 log::debug!("SetTime Reply");
                 CommandReply::SetTime
@@ -125,24 +131,12 @@ impl PacketParser {
 
     fn handle_stress(&mut self, packet: &[u8]) -> Result<Option<CommandReply>> {
         log::debug!("Stress reply {:?}", self.multi_packet_states.stress_state);
-        if let Some(mut ss) = self.multi_packet_states.stress_state.take() {
+        if let Some(ss) = self.multi_packet_states.stress_state.as_mut() {
             ss.step(packet)?;
-            let StressState::Complete {
-                measurements,
-                minutes_appart,
-            } = ss
-            else {
-                self.multi_packet_states.stress_state = Some(ss);
-                return Ok(None);
-            };
-            Ok(Some(CommandReply::Stress {
-                time_interval_sec: minutes_appart,
-                measurements,
-            }))
         } else {
-            self.multi_packet_states.stress_state = StressState::new(packet).ok();
-            Ok(None)
+            self.multi_packet_states.stress_state = Some(StressState::new(packet)?);
         }
+        Ok(self.check_for_complete_stress())
     }
 
     fn handle_heart_rate(&mut self, packet: &[u8]) -> Result<Option<CommandReply>> {
@@ -187,18 +181,15 @@ impl PacketParser {
     fn check_for_complete_big_data(&mut self) -> Result<Option<CommandReply>> {
         match self.multi_packet_states.partial_big_data.take() {
             Some(BigDataState::Complete(packet)) => {
-                let kind = packet.get_data_ref().get(1).copied().ok_or_else(|| {
-                    format!("Error in big data packet, not long enough: {packet:?}")
-                })?;
-                match kind {
-                    constants::BIG_DATA_TYPE_SLEEP => {
+                match &packet {
+                    BigDataPacket::Sleep(_) => {
                         let sleep_data: SleepData = packet.try_into()?;
                         Ok(Some(CommandReply::Sleep(sleep_data)))
                     }
-                    constants::BIG_DATA_TYPE_SPO2 => {
-                        Ok(Some(CommandReply::Unknown(packet.get_data_ref().to_vec())))
+                    BigDataPacket::Oxygen(_) => {
+                        let oxy_data: OxygenData = packet.try_into()?;
+                        Ok(Some(CommandReply::Oxygen(oxy_data)))
                     }
-                    _ => Err(format!("Unknown big data tag: {packet:?}").into()),
                 }
             }
             state => {
@@ -207,25 +198,17 @@ impl PacketParser {
             }
         }
     }
-}
 
-impl futures::Stream for ClientReceiver {
-    type Item = CommandReply;
-
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        let std::task::Poll::Ready(inner) = self.stream.poll_next_unpin(cx) else {
-            return std::task::Poll::Pending;
-        };
-        let Some(packet) = inner else {
-            return std::task::Poll::Ready(None);
-        };
-        if let Some(packet) = self.parser.handle_packet(&packet) {
-            return std::task::Poll::Ready(Some(packet))
+    fn check_for_complete_stress(&mut self) -> Option<CommandReply> {
+        match self.multi_packet_states.stress_state.take() {
+            Some(StressState::Complete { measurements, minutes_appart }) => {
+                return Some(CommandReply::Stress { time_interval_sec: minutes_appart, measurements, })
+            },
+            state => {
+                self.multi_packet_states.stress_state = state;
+                None
+            }
         }
-        std::task::Poll::Pending
     }
 }
 
@@ -254,6 +237,7 @@ pub enum CommandReply {
     },
     Sleep(SleepData),
     Oxygen(OxygenData),
+    Notification(Notification),
     Unknown(Vec<u8>),
 }
 
@@ -266,6 +250,15 @@ pub enum RealTimeEvent {
 }
 
 impl ClientReceiver {
+    pub async fn next(&mut self) -> Option<CommandReply> {
+        while let Some(event) = self.stream.next().await {
+            if let Some(parsed) = self.parser.handle_packet(&event) {
+                return Some(parsed)
+            }
+        }
+        None
+    }
+
     pub async fn connect_device(device: &Device) -> Result<Self> {
         let mut streams = Vec::with_capacity(2);
         let mut charas = Vec::with_capacity(2);

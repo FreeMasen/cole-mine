@@ -19,7 +19,7 @@ pub enum StressState {
 
 impl StressState {
     pub fn new(packet: &[u8]) -> Result<Self> {
-        if packet[0] == 55 {
+        if packet[0] != 55 {
             return Err(format!("Error parsing stress state {packet:?}").into());
         }
         if packet[1] == 255 {
@@ -51,16 +51,18 @@ impl StressState {
                 length,
                 minutes_appart,
             } => {
-                if packet[2] == 0 {
+                if packet[1] == 0 {
+                    log::debug!("empty from Length");
                     Self::Complete {
                         measurements: Vec::new(),
                         minutes_appart: *minutes_appart,
                     }
                 } else {
+                    log::debug!("more after length");
                     let mut measurements = Vec::with_capacity(48);
-                    measurements[0..13].copy_from_slice(&packet[3..packet.len() - 1]);
+                    measurements.extend_from_slice(&packet[3..packet.len() - 1]);
                     Self::Receiving {
-                        target_length: *length - 1,
+                        target_length: *length,
                         measurements,
                         minutes_appart: *minutes_appart,
                     }
@@ -76,7 +78,7 @@ impl StressState {
                     return Ok(());
                 } else {
                     measurements.extend_from_slice(&packet[2..packet.len() - 1]);
-                    if *target_length == packet[1] {
+                    if *dbg!(target_length) == dbg!(packet[1]) {
                         let measurements = std::mem::take(measurements);
                         Self::Complete {
                             measurements,
