@@ -5,8 +5,8 @@ expression: sleep_data
 SleepData {
     sessions: [
         SleepSession {
-            start: 2024-11-26 2:57:00.0 +00:00:00,
-            end: 2024-11-27 8:43:00.0 +00:00:00,
+            start: 2024-11-26 2:57:00.0,
+            end: 2024-11-27 8:43:00.0,
             stages: [
                 Light(
                     67,

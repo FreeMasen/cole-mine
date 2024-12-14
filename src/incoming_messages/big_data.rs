@@ -60,7 +60,7 @@ impl TryFrom<BigDataPacket> for SleepData {
         }
 
         let mut iter = data[1..].iter().copied();
-        let now = OffsetDateTime::now_local().unwrap_or_else(|_|OffsetDateTime::now_utc());
+        let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
         let today = now.date();
         for i in 1..days {
             let days_ago = iter.next().ok_or_else(too_short_error(i, "days ago"))?;
@@ -75,15 +75,10 @@ impl TryFrom<BigDataPacket> for SleepData {
                 println!("{} {}", start, (start as i32) - 1440);
                 day.midnight() - Duration::minutes(1440 - start as u64)
             } else {
-                day.previous_day()
-                    .ok_or("Invalid day")?
-                    .midnight()
-                    + Duration::minutes(start as _)
+                day.previous_day().ok_or("Invalid day")?.midnight() + Duration::minutes(start as _)
             };
             let end = day.midnight() + Duration::minutes(end as _);
-            log::debug!(
-                "sleep session {start:?}-{end:?}",
-            );
+            log::debug!("sleep session {start:?}-{end:?}",);
             let mut stages = Vec::new();
             let mut remaining_bytes = day_bytes - 4;
             while remaining_bytes > 0 {
@@ -134,7 +129,7 @@ impl BigDataState {
             } else if bytes[1] == constants::BIG_DATA_TYPE_SPO2 {
                 BigDataPacket::Oxygen(data)
             } else {
-                return Err(format!("Unknown big data type: {bytes:?}").into())
+                return Err(format!("Unknown big data type: {bytes:?}").into());
             },
         };
         ret.step(&bytes[6..])?;
@@ -213,7 +208,7 @@ impl TryFrom<BigDataPacket> for OxygenData {
 
         let day_in_packet = iter.next().ok_or_else(|| format!("Packet sized 7"))?;
         let mut samples = Vec::new();
-        let now = OffsetDateTime::now_local().unwrap_or_else(|_|OffsetDateTime::now_utc());
+        let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
         let today = now.date().midnight();
         for i in 0..day_in_packet {
             let days_ago = iter

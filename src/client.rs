@@ -64,7 +64,8 @@ impl Client {
         let cmd_bytes: [u8; 16] = command.into();
         log::trace!("serialized: {cmd_bytes:?}");
         if cmd_bytes[0] == crate::constants::CMD_BIG_DATA_V2
-        || cmd_bytes[0] == crate::constants::CMD_NOTIFICATION {
+            || cmd_bytes[0] == crate::constants::CMD_NOTIFICATION
+        {
             self.tx2.write_command(&cmd_bytes).await?;
         } else {
             self.tx.write_command(&cmd_bytes).await?;

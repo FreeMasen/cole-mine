@@ -4,11 +4,11 @@ use cole_mine::client::Command;
 use cole_mine::{incoming_messages::CommandReply, Client, DurationExt};
 
 use cole_mine::BDAddr;
-use time::macros::format_description;
 use std::convert::Infallible;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::Duration;
+use time::macros::format_description;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -30,13 +30,10 @@ enum Commands {
         #[arg(short = 'f', long = "force-disconnect")]
         force_disconnect: bool,
     },
-    Goals {
-        addr: BDAddr,
-    },
+    /// Read goals
+    Goals { addr: BDAddr },
     /// Get the hardware and firmware information from a device
-    DeviceDetails {
-        id: DeviceIdentifier,
-    },
+    DeviceDetails { id: DeviceIdentifier },
     #[clap(flatten)]
     SendCommand(SendCommand),
 }
@@ -45,14 +42,18 @@ enum Commands {
 enum SendCommand {
     Raw {
         id: DeviceIdentifier,
-        // a hex encoded byte array with colons seperating
+        // a hex encoded byte array with colons separating
         #[arg(short = 'c', long = "command")]
         commands: Vec<String>,
+        // how long to wait for responses
         #[arg(short = 'l', long = "listen")]
         listen_seconds: Option<u64>,
     },
     Listen {
         id: DeviceIdentifier,
+        // how long to wait for responses
+        #[arg(short = 'l', long = "listen")]
+        listen_seconds: Option<u64>,
     },
     /// Set the time
     ///
@@ -113,8 +114,9 @@ enum SendCommand {
     },
     ReadOxygen {
         id: DeviceIdentifier,
-    }
+    },
 }
+
 #[derive(Debug, Clone)]
 enum DeviceIdentifier {
     Mac(BDAddr),
@@ -147,7 +149,10 @@ async fn main() -> Result {
     }
     match Commands::parse() {
         Commands::FindAdapters => find_adapters().await,
-        Commands::FindRings { see_all, force_disconnect } => find_rings(see_all, force_disconnect).await,
+        Commands::FindRings {
+            see_all,
+            force_disconnect,
+        } => find_rings(see_all, force_disconnect).await,
         Commands::Goals { addr } => read_goals(addr).await,
         Commands::DeviceDetails { id } => get_device_details(id).await,
         Commands::SendCommand(cmd) => send_command(cmd).await,
@@ -155,14 +160,14 @@ async fn main() -> Result {
 }
 
 async fn find_adapters() -> Result {
-    use btleplug::api::{Manager as _, Central as _};
+    use btleplug::api::{Central as _, Manager as _};
     use btleplug::platform::Manager;
 
     let manager = Manager::new().await?;
     let adapter_list = manager.adapters().await?;
     if adapter_list.is_empty() {
         println!("No Bluetooth adapters");
-        return Ok(())
+        return Ok(());
     }
     for (idx, adapter) in adapter_list.into_iter().enumerate() {
         let info = adapter.adapter_info().await?;
@@ -180,7 +185,7 @@ async fn send_command(cmd: SendCommand) -> Result {
             listen_seconds,
         } => send_raw(id, commands, listen_seconds).await,
         SendCommand::ReadStress { id, day_offset } => read_stress(id, day_offset).await,
-        SendCommand::Listen { id } => send_raw(id, Vec::new(), Some(120)).await,
+        SendCommand::Listen { id, listen_seconds } => connect_and_listen(id, listen_seconds).await,
         SendCommand::SetTime {
             id,
             minutes,
@@ -192,11 +197,14 @@ async fn send_command(cmd: SendCommand) -> Result {
         SendCommand::ReadSportDetail { id, day_offset } => read_sport_details(id, day_offset).await,
         SendCommand::ReadHeartRate { id, date } => {
             let date = if let Some(date) = date {
-                time::Date::parse(&date, time::macros::format_description!("[year]-[month]-[day]"))?
+                time::Date::parse(
+                    &date,
+                    time::macros::format_description!("[year]-[month]-[day]"),
+                )?
             } else {
-                OffsetDateTime::now_local().unwrap_or_else(|_| {
-                    OffsetDateTime::now_utc()
-                }).date()
+                OffsetDateTime::now_local()
+                    .unwrap_or_else(|_| OffsetDateTime::now_utc())
+                    .date()
             };
             read_heart_rate(id, date).await
         }
@@ -251,9 +259,7 @@ async fn set_time(
     const MINUTE: u64 = 60;
     const HOUR: u64 = MINUTE * 60;
     const DAY: u64 = HOUR * 24;
-    let mut now = OffsetDateTime::now_local().unwrap_or_else(|_| {
-        OffsetDateTime::now_utc()
-    });
+    let mut now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
     if let Some(minutes) = minutes {
         let (dur, add) = get_duration(MINUTE, minutes);
         if add {
@@ -391,9 +397,13 @@ async fn read_heart_rate(id: DeviceIdentifier, date: time::Date) -> Result {
             );
             let mut minute = time;
             for rate in hr.rates {
-                println!("  {:} {:>3}", 
-                    minute.format(format_description!("[hour repr:12]:[minute] [period]")).unwrap()
-                , rate);
+                println!(
+                    "  {:} {:>3}",
+                    minute
+                        .format(format_description!("[hour repr:12]:[minute] [period]"))
+                        .unwrap(),
+                    rate
+                );
                 minute += Duration::from_secs(60 * 5);
                 if time.date() != minute.date() {
                     break;
@@ -535,6 +545,22 @@ async fn send_raw(
     .await
 }
 
+async fn connect_and_listen(id: DeviceIdentifier, listen_seconds: Option<u64>) -> Result {
+    with_client(id, move |mut client| async move {
+        let listening_for = listen_seconds.unwrap_or(120);
+        let to = Duration::from_secs(listening_for);
+        tokio::time::timeout(to, async {
+            while let Ok(Some(reply)) = client.read_next().await {
+                println!("{reply:?}");
+            }
+        })
+        .await
+        .ok();
+        Ok(())
+    })
+    .await
+}
+
 fn parse_raw_command(s: &str) -> Option<Vec<u8>> {
     s.split(':')
         .map(|hex| Ok(u8::from_str_radix(hex, 16)?))
@@ -560,10 +586,13 @@ async fn blink(id: DeviceIdentifier) -> Result {
 async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
     log::info!("getting stress details");
     with_client(id, |mut client| async move {
-        let mut start = OffsetDateTime::now_local().unwrap_or_else(|_| { 
-            log::warn!("Failed to get local time, falling back to UTC");
-            OffsetDateTime::now_utc()
-        }).date().midnight();
+        let mut start = OffsetDateTime::now_local()
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to get local time, falling back to UTC");
+                OffsetDateTime::now_utc()
+            })
+            .date()
+            .midnight();
         while day_offset > 0 {
             day_offset -= 1;
             start = start
@@ -577,8 +606,14 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
         let Some(CommandReply::Stress {
             time_interval_sec,
             measurements,
-        } ) = wait_for_reply(&mut client, |r| matches!(r, CommandReply::Stress { .. }), "stress").await? else {
-            return Err("Failed to get stress response".into())
+        }) = wait_for_reply(
+            &mut client,
+            |r| matches!(r, CommandReply::Stress { .. }),
+            "stress",
+        )
+        .await?
+        else {
+            return Err("Failed to get stress response".into());
         };
         let minutes_in_a_day = 24 * 60;
         let segments = time_interval_sec as u32 / minutes_in_a_day;
@@ -591,25 +626,6 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
                 &measurements[i as usize]
             )
         }
-        // if ret.is_ok() {
-        //     while let Ok(Some(CommandReply::Stress {
-        //         time_interval_sec,
-        //         measurements,
-        //     })) = client.read_next().await
-        //     {
-        //         let minutes_in_a_day = 24 * 60;
-        //         let segments = time_interval_sec as u32 / minutes_in_a_day;
-        //         for i in 0..segments as u64 {
-        //             let time = start + Duration::from_secs(time_interval_sec as u64 * i);
-        //             println!(
-        //                 "{}: {}",
-        //                 time.format(&time::format_description::well_known::Rfc3339)
-        //                     .unwrap(),
-        //                 &measurements[i as usize]
-        //             )
-        //         }
-        //     }
-        // }
         Ok(())
     })
     .await
@@ -617,9 +633,7 @@ async fn read_stress(id: DeviceIdentifier, mut day_offset: u8) -> Result {
 
 async fn read_sleep(id: DeviceIdentifier) -> Result {
     with_client(id, |mut client| async move {
-        client
-            .send(Command::SyncSleep)
-            .await?;
+        client.send(Command::SyncSleep).await?;
         while let Some(packet) = client.read_next().await? {
             if let CommandReply::Sleep(sleep_data) = packet {
                 for session in sleep_data.sessions {
@@ -635,9 +649,7 @@ async fn read_sleep(id: DeviceIdentifier) -> Result {
 
 async fn read_oxygen(id: DeviceIdentifier) -> Result {
     with_client(id, |mut client| async move {
-        client
-            .send(Command::SyncOxygen)
-            .await?;
+        client.send(Command::SyncOxygen).await?;
         while let Some(packet) = client.read_next().await? {
             if let CommandReply::Oxygen(oxy) = packet {
                 for sample in oxy.samples {
@@ -678,12 +690,20 @@ fn report_oxygen_info(oxy: OxygenMeasurement) {
     if oxy.min == 0 && oxy.max == 0 {
         return;
     }
-    print!("{}:", oxy.when.format(time::macros::format_description!("[year]-[month]-[day] [hour repr:12]:[minute] [period]")).unwrap());
+    print!(
+        "{}:",
+        oxy.when
+            .format(time::macros::format_description!(
+                "[year]-[month]-[day] [hour repr:12]:[minute] [period]"
+            ))
+            .unwrap()
+    );
     if oxy.max == 0 || oxy.min == 0 {
         let v = oxy.max.max(oxy.min);
         print!("{v:>7} ±  0 ~{:.02}", v as f32);
     } else {
-        print!("{:>3}-{:<3} ±{:>3} ~{:.02}",
+        print!(
+            "{:>3}-{:<3} ±{:>3} ~{:.02}",
             oxy.min,
             oxy.max,
             oxy.min.max(oxy.max) - oxy.min.min(oxy.max),
@@ -704,7 +724,14 @@ where
     client.connect().await?;
     log::debug!("client connected");
     let device = client.device.clone();
-    let ret = cb(client).await;
+    let ret = tokio::select! {
+        ret = cb(client) => {
+            ret
+        }
+        _ = tokio::signal::ctrl_c() => {
+            Ok(())
+        }
+    };
     log::trace!("disconnecting client");
     device.disconnect().await?;
     log::trace!("operation success: {}", ret.is_ok());
@@ -733,5 +760,5 @@ async fn find_device_by_name(name: &str) -> Result<bleasy::Device> {
             return Ok(dev);
         }
     }
-    Err("Undable to find device by name".to_string().into())
+    Err("Unable to find device by name".into())
 }

@@ -16,19 +16,25 @@ impl TryFrom<&[u8]> for Notification {
             .ok_or_else(|| format!("0 size buffer for notification packet"))?;
 
         if tag != constants::CMD_NOTIFICATION {
-            return Err(format!("Invalid notification packet, tag byte not {}: {value:?}", constants::CMD_NOTIFICATION))
+            return Err(format!(
+                "Invalid notification packet, tag byte not {}: {value:?}",
+                constants::CMD_NOTIFICATION
+            ));
         }
         Ok(match value[1] {
             constants::NOTIFICATION_NEW_HR_DATA => Notification::NewData(DataName::HeartRate),
             constants::NOTIFICATION_NEW_SPO2_DATA => Notification::NewData(DataName::Oxygen),
             constants::NOTIFICATION_NEW_STEPS_DATA => Notification::NewData(DataName::Steps),
-            constants::NOTIFICATION_BATTERY_LEVEL => {
-                Notification::Battery(value[2])
-            },
+            constants::NOTIFICATION_BATTERY_LEVEL => Notification::Battery(value[2]),
             constants::NOTIFICATION_LIVE_ACTIVITY => {
                 Notification::Activity(LiveActivity::try_from(value)?)
             }
-            _ => return Err(format!("Unknown notification type {}: {:?}", value[1], value)),
+            _ => {
+                return Err(format!(
+                    "Unknown notification type {}: {:?}",
+                    value[1], value
+                ))
+            }
         })
     }
 }
@@ -52,7 +58,10 @@ impl TryFrom<&[u8]> for LiveActivity {
 
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         if value.len() < 11 {
-            return Err(format!("LiveActivity packet too short ({}): {value:?}", value.len()))
+            return Err(format!(
+                "LiveActivity packet too short ({}): {value:?}",
+                value.len()
+            ));
         }
         let steps = [value[4], value[3], value[2], 0];
         let steps = u32::from_le_bytes(steps);

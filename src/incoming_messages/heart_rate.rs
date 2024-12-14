@@ -89,7 +89,13 @@ impl HeartRateState {
         let mut timestamp_bytes = [0u8; 4];
         timestamp_bytes.copy_from_slice(&packet[2..6]);
         let timestamp_int = u32::from_le_bytes(timestamp_bytes);
-        println!("wire: {timestamp_int}\n utc: {}\n lcl: {}", OffsetDateTime::now_utc().unix_timestamp(), OffsetDateTime::now_local().map(|d| d.unix_timestamp()).unwrap_or_default());
+        println!(
+            "wire: {timestamp_int}\n utc: {}\n lcl: {}",
+            OffsetDateTime::now_utc().unix_timestamp(),
+            OffsetDateTime::now_local()
+                .map(|d| d.unix_timestamp())
+                .unwrap_or_default()
+        );
         let base_date = OffsetDateTime::from_unix_timestamp(timestamp_int as _)?;
         let date = PrimitiveDateTime::new(base_date.date(), base_date.time());
         let mut rates = Vec::with_capacity(size as usize * 13);

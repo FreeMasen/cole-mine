@@ -3,7 +3,7 @@ use futures::StreamExt;
 
 #[tokio::main]
 async fn main() {
-    let mut stream = discover(true).await.unwrap();
+    let mut stream = discover(true, false).await.unwrap();
     while let Some(dev) = stream.next().await {
         println!(
             "{}: {}",

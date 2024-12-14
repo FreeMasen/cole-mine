@@ -165,7 +165,9 @@ impl PacketParser {
                         CommandReply::HeartRate(HeartRate { range, rates, date })
                     }
                     Ok(other) => {
-                        log::trace!("First packet incomplete, waiting for remaining bytes: {other:?}");
+                        log::trace!(
+                            "First packet incomplete, waiting for remaining bytes: {other:?}"
+                        );
                         self.multi_packet_states.heart_rate_state = Some(other);
                         return Ok(None);
                     }
@@ -180,18 +182,16 @@ impl PacketParser {
 
     fn check_for_complete_big_data(&mut self) -> Result<Option<CommandReply>> {
         match self.multi_packet_states.partial_big_data.take() {
-            Some(BigDataState::Complete(packet)) => {
-                match &packet {
-                    BigDataPacket::Sleep(_) => {
-                        let sleep_data: SleepData = packet.try_into()?;
-                        Ok(Some(CommandReply::Sleep(sleep_data)))
-                    }
-                    BigDataPacket::Oxygen(_) => {
-                        let oxy_data: OxygenData = packet.try_into()?;
-                        Ok(Some(CommandReply::Oxygen(oxy_data)))
-                    }
+            Some(BigDataState::Complete(packet)) => match &packet {
+                BigDataPacket::Sleep(_) => {
+                    let sleep_data: SleepData = packet.try_into()?;
+                    Ok(Some(CommandReply::Sleep(sleep_data)))
                 }
-            }
+                BigDataPacket::Oxygen(_) => {
+                    let oxy_data: OxygenData = packet.try_into()?;
+                    Ok(Some(CommandReply::Oxygen(oxy_data)))
+                }
+            },
             state => {
                 self.multi_packet_states.partial_big_data = state;
                 Ok(None)
@@ -201,9 +201,15 @@ impl PacketParser {
 
     fn check_for_complete_stress(&mut self) -> Option<CommandReply> {
         match self.multi_packet_states.stress_state.take() {
-            Some(StressState::Complete { measurements, minutes_appart }) => {
-                return Some(CommandReply::Stress { time_interval_sec: minutes_appart, measurements, })
-            },
+            Some(StressState::Complete {
+                measurements,
+                minutes_appart,
+            }) => {
+                return Some(CommandReply::Stress {
+                    time_interval_sec: minutes_appart,
+                    measurements,
+                })
+            }
             state => {
                 self.multi_packet_states.stress_state = state;
                 None
@@ -253,7 +259,7 @@ impl ClientReceiver {
     pub async fn next(&mut self) -> Option<CommandReply> {
         while let Some(event) = self.stream.next().await {
             if let Some(parsed) = self.parser.handle_packet(&event) {
-                return Some(parsed)
+                return Some(parsed);
             }
         }
         None
@@ -286,9 +292,7 @@ impl ClientReceiver {
                 }
             }
         }
-        let mut ret = Self::from_stream(Box::pin(futures::stream::select_all(
-            streams,
-        )));
+        let mut ret = Self::from_stream(Box::pin(futures::stream::select_all(streams)));
         ret.charas = charas;
         Ok(ret)
     }

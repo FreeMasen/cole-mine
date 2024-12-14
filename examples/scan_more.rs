@@ -26,7 +26,7 @@ async fn main() {
     let force_all = std::env::var("COLE_MINE_SCAN_MORE_FORCE_ALL")
         .map(|v| v == "1")
         .unwrap_or(false);
-    let mut stream = discover(false).await.unwrap();
+    let mut stream = discover(true, true).await.unwrap();
     while let Some(dev) = stream.next().await {
         log::trace!("looking up local name");
         let name = dev.local_name().await;
