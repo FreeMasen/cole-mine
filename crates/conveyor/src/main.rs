@@ -7,16 +7,13 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use database::{Database, Ring, RingEvent};
+use fissure::{Database, Ring, RingEvent};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tower_http::{limit::RequestBodyLimitLayer, trace::TraceLayer};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
-mod database;
-
-type Result<T = (), E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 type ResponsePair<T = Value> = (StatusCode, Json<T>);
 
 #[tokio::main]

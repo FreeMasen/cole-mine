@@ -1,0 +1,50 @@
+---
+source: crates/fissure/src/lib.rs
+expression: json
+---
+[
+  {
+    "mac": "00:00:00:00:00:00",
+    "when": "2001-01-31T00:00:00.000Z",
+    "value": {
+      "type": "Activity",
+      "data": {
+        "steps": 11,
+        "calories": 222.0,
+        "distance": 88
+      }
+    }
+  },
+  {
+    "mac": "00:00:00:00:00:00",
+    "when": "2001-01-31T00:00:00.000Z",
+    "value": {
+      "type": "HeartRate",
+      "data": 90
+    }
+  },
+  {
+    "mac": "00:00:00:00:00:00",
+    "when": "2001-01-31T00:00:00.000Z",
+    "value": {
+      "type": "Oxygen",
+      "data": 11
+    }
+  },
+  {
+    "mac": "00:00:00:00:00:00",
+    "when": "2001-01-31T00:00:00.000Z",
+    "value": {
+      "type": "Sleep",
+      "data": 0
+    }
+  },
+  {
+    "mac": "00:00:00:00:00:00",
+    "when": "2001-01-31T00:00:00.000Z",
+    "value": {
+      "type": "Stress",
+      "data": 0
+    }
+  }
+]
