@@ -1,7 +1,7 @@
 use crate::Result;
-use typed_builder::TypedBuilder;
+use bon::Builder;
 
-#[derive(Default, TypedBuilder, PartialEq, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Default, Builder, PartialEq, Debug, serde::Deserialize, serde::Serialize)]
 pub struct SportDetail {
     pub year: u16,
     pub month: u8,

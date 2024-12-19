@@ -7,7 +7,7 @@ use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::Result;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PersistentEmbedded, typed_builder::TypedBuilder)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PersistentEmbedded, bon::Builder)]
 pub struct DateTime {
     pub year: u16,
     pub month: u8,

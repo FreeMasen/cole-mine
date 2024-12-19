@@ -1,3 +1,4 @@
+//! Http server
 use std::{fmt::Display, path::PathBuf};
 
 use axum::{

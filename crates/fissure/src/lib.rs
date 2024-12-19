@@ -1,3 +1,6 @@
+//! Database Abstractions
+//! 
+
 use std::{ops::RangeBounds, path::Path};
 
 use date::DateTime;
@@ -143,13 +146,13 @@ trait FindRingByMac {
     Serialize,
     Deserialize,
     PartialEq,
-    typed_builder::TypedBuilder,
+    bon::Builder,
 )]
 pub struct RingEvent {
-    #[builder(setter(into))]
+    #[builder(into)]
     #[index(mode = "cluster")]
     pub mac: String,
-    #[builder(setter(into))]
+    #[builder(into)]
     pub when: DateTime,
     pub value: EventData,
 }

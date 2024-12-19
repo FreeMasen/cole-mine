@@ -29,6 +29,9 @@ enum Commands {
         /// connection
         #[arg(short = 'f', long = "force-disconnect")]
         force_disconnect: bool,
+        /// Seconds to listen for devices
+        #[arg(short = 'l', long = "listen", default_value_t = 15)]
+        listen_seconds: u64,
     },
     /// Read goals
     Goals { addr: BDAddr },
@@ -152,7 +155,8 @@ async fn main() -> Result {
         Commands::FindRings {
             see_all,
             force_disconnect,
-        } => find_rings(see_all, force_disconnect).await,
+            listen_seconds,
+        } => find_rings(see_all, force_disconnect, listen_seconds).await,
         Commands::Goals { addr } => read_goals(addr).await,
         Commands::DeviceDetails { id } => get_device_details(id).await,
         Commands::SendCommand(cmd) => send_command(cmd).await,
@@ -222,17 +226,21 @@ async fn send_command(cmd: SendCommand) -> Result {
     }
 }
 
-async fn find_rings(see_all: bool, force_disconnect: bool) -> Result {
+async fn find_rings(see_all: bool, force_disconnect: bool, listen_seconds: u64) -> Result {
     use futures::StreamExt;
     log::info!("Finding rings");
-    let mut stream = cole_mine::discover(see_all, force_disconnect).await?;
-    while let Some(dev) = stream.next().await {
-        print!("{}", dev.address());
-        if let Some(name) = dev.local_name().await {
-            print!(": {name}")
+    let dur = Duration::from_secs(listen_seconds);
+    tokio::time::timeout(dur, async move {
+        let mut stream = cole_mine::discover(see_all, force_disconnect).await?;
+        while let Some(dev) = stream.next().await {
+            print!("{}", dev.address());
+            if let Some(name) = dev.local_name().await {
+                print!(": {name}")
+            }
+            println!("");
         }
-        println!("");
-    }
+        Result::Ok(())
+    }).await.unwrap_or(Ok(()))?;
     Ok(())
 }
 
