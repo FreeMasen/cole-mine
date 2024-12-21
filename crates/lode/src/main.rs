@@ -185,24 +185,29 @@ async fn probe_device(addr: DeviceIdentifier) -> Result {
             find_device_by_name(&name).await?
         }
     };
-    print!("{}", dev.address());
-    if let Some(name) = dev.local_name().await {
-        println!(": {name}")
-    } else {
-        println!()
-    }
-    if let Some(rssi) = dev.rssi().await {
-        println!("rssi: {rssi}");
-    }
-    println!("Characteristics");
-    let charas = dev.characteristics().await.unwrap();
-    report_charas(&charas, 2);
-    println!("--------------------------");
-    println!("Services");
-    let services = dev.services().await.unwrap();
-    report_services(&services);
-    println!("--------------------------");
-    Ok(())
+    async fn inner(dev: &bleasy::Device) -> Result {
+        print!("{}", dev.address());
+        if let Some(name) = dev.local_name().await {
+            println!(": {name}")
+        } else {
+            println!()
+        }
+        if let Some(rssi) = dev.rssi().await {
+            println!("rssi: {rssi}");
+        }
+        println!("Characteristics");
+        let charas = dev.characteristics().await?;
+        report_charas(&charas, 2);
+        println!("--------------------------");
+        println!("Services");
+        let services = dev.services().await?;
+        report_services(&services);
+        println!("--------------------------");
+        Ok(())
+    };
+    let ret = inner(&dev).await;
+    dev.disconnect().await.ok();
+    ret
 }
 
 fn report_services(services: &[bleasy::Service]) {
