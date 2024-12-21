@@ -1,163 +1,60 @@
-use bleasy::Device;
-use cole_mine::discover;
-use futures::StreamExt;
 use std::{
-    collections::{BTreeMap, BTreeSet},
     sync::OnceLock,
-    time::Duration,
+    collections::BTreeMap,
 };
-use tokio::time::timeout;
 use uuid::Uuid;
 
-const MANU: Uuid = uuid::uuid!("00002a29-0000-1000-8000-00805f9b34fb");
-const MODEL: Uuid = uuid::uuid!("00002a24-0000-1000-8000-00805f9b34fb");
-const DEV_INF: Uuid = uuid::uuid!("0000180a-0000-1000-8000-00805f9b34fb");
 static SERVICE_NAMES: OnceLock<BTreeMap<u16, &'static str>> = OnceLock::new();
 static CHARAS_NAMES: OnceLock<BTreeMap<u16, &'static str>> = OnceLock::new();
 
-#[tokio::main]
-async fn main() {
-    env_logger::init();
-    MANU.as_bytes();
-    let max_op_secs = std::env::var("COLE_MINE_SCAN_MORE_TIMEOUT_SECS")
-        .ok()
-        .and_then(|a| a.parse::<u64>().ok())
-        .unwrap_or(5);
-    let force_all = std::env::var("COLE_MINE_SCAN_MORE_FORCE_ALL")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    let mut stream = discover(true, false).await.unwrap();
-    while let Some(dev) = stream.next().await {
-        log::trace!("looking up local name");
-        let name = dev.local_name().await;
-        log::trace!("looking up rssi");
-        let rssi = dev.rssi().await.unwrap_or_default();
-        log::trace!("looking up service count");
-        let service_count = if let Ok(Ok(srv_ct)) =
-            timeout(Duration::from_secs(max_op_secs), dev.service_count()).await
-        {
-            srv_ct
-        } else {
-            0
-        };
-        log::trace!("looking up characteristics");
-        let characteristics: BTreeSet<Uuid> =
-            timeout(Duration::from_secs(max_op_secs), dev.characteristics())
-                .await
-                .unwrap_or_else(|_| {
-                    log::debug!("timed out looking up characteristics");
-                    Ok(Vec::new())
-                })
-                .unwrap_or_default()
-                .into_iter()
-                .map(|c| c.uuid())
-                .collect();
-        log::trace!("looking up manu/model");
-        let (mut manu, mut model) = timeout(Duration::from_secs(max_op_secs), manu_model(&dev))
-            .await
-            .unwrap_or_else(|_| {
-                log::debug!("timed out looking for manu/model");
-                (None, None)
-            });
-        let mut srvs = BTreeMap::new();
-        log::trace!("looking up services");
-        if let Ok(Ok(services)) = timeout(Duration::from_secs(max_op_secs), dev.services())
-            .await
-            .inspect_err(|_| {
-                log::debug!("timed out looking for services");
-            })
-        {
-            for s in services {
-                let chars = s.characteristics();
-                if s.uuid() == DEV_INF {
-                    for ch in &chars {
-                        if manu.is_none() && ch.uuid() == MANU {
-                            log::trace!("reading device info-manu");
-                            if let Ok(bytes) = ch.read().await {
-                                manu = Some(String::from_utf8_lossy(&bytes).to_string());
-                            }
-                        }
-                        if model.is_none() && ch.uuid() == MODEL {
-                            log::trace!("reading device info-model");
-                            if let Ok(bytes) = ch.read().await {
-                                model = Some(String::from_utf8_lossy(&bytes).to_string());
-                            }
-                        }
-                    }
-                }
-                let key = s.uuid();
-                let value: BTreeSet<Uuid> = chars.into_iter().map(|c| c.uuid()).collect();
-                srvs.insert(key, value);
-            }
-        }
-        log::debug!("{name:?} {}", dev.address());
-        if force_all
-            || name.is_some()
-            || !characteristics.is_empty()
-            || !srvs.is_empty()
-            || manu.is_some()
-            || model.is_some()
-        {
-            println!("found device {}", dev.address());
-            if let Some(name) = name {
-                println!("  name: {name}");
-            }
-            if let Some(manu) = manu {
-                println!("  manu: {manu}");
-            }
-            if let Some(model) = model {
-                println!("  model: {model}");
-            }
-            println!("  rssi: {rssi}");
-            println!("  char_ct: {}", characteristics.len());
-            if !characteristics.is_empty() {
-                println!("  chars:");
-            }
-            for ch in characteristics {
-                print!("    {ch}");
-                if let Some(name) = charas_name_from(ch) {
-                    print!("-{name}");
-                }
-                println!();
-            }
-            println!("  srv_ct: {service_count}");
-            if !srvs.is_empty() {
-                println!("  srvs:");
-                for (id, charas) in &srvs {
-                    print!("    srv: {id}");
-                    if let Some(name) = service_name_from(*id) {
-                        print!("-{name}")
-                    }
-                    println!();
-                    for ch in charas.iter() {
-                        print!("      ch: {ch}");
-                        if let Some(name) = charas_name_from(*ch) {
-                            print!("-{name}");
-                        }
-                        println!();
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn service_name_from(id: Uuid) -> Option<&'static str> {
-    let id = uuid_to_id(id)?;
+pub fn service_name_from(id: Uuid) -> Option<&'static str> {
+    let prefix = uuid_to_id(id)?;
     SERVICE_NAMES
         .get_or_init(generate_service_map)
-        .get(&id)
+        .get(&prefix)
         .map(|s| *s)
-}
-fn charas_name_from(id: Uuid) -> Option<&'static str> {
-    let id = uuid_to_id(id)?;
-    CHARAS_NAMES
-        .get_or_init(generate_charas_map)
-        .get(&id)
-        .map(|s| *s)
+        .or_else(|| {
+            colmi_service_name(id)
+        })
 }
 
-fn uuid_to_id(id: Uuid) -> Option<u16> {
+fn colmi_service_name(id: Uuid) -> Option<&'static str> {
+    if id == uuid::uuid!("6e40fff0-b5a3-f393-e0a9-e50e24dcca9e") {
+        return Some("Colmi UART Service")
+    }
+    if id == uuid::uuid!("de5bf728-d711-4e47-af26-65e3012a5dc7") {
+        return Some("Colmi Notification Service")
+    }
+    None
+}
+
+pub fn charas_name_from(id: Uuid) -> Option<&'static str> {
+    let prefix = uuid_to_id(id)?;
+    CHARAS_NAMES
+        .get_or_init(generate_charas_map)
+        .get(&prefix)
+        .map(|s| *s)
+        .or_else(|| colmi_chara_name(id))
+}
+
+
+fn colmi_chara_name(id: Uuid) -> Option<&'static str> {
+    if id == uuid::uuid!("6e400002-b5a3-f393-e0a9-e50e24dcca9e") {
+        return Some("Colmi UART Receiver");
+    }
+    if id == uuid::uuid!("de5bf72a-d711-4e47-af26-65e3012a5dc7") {
+        return Some("Colmi Command");
+    }
+    if id == uuid::uuid!("6e400003-b5a3-f393-e0a9-e50e24dcca9e") {
+        return Some("Colmi UART Sender");
+    }
+    if id == uuid::uuid!("de5bf729-d711-4e47-af26-65e3012a5dc7") {
+        return Some("Colmi Notification V2")
+    }
+    None
+}
+
+pub fn uuid_to_id(id: Uuid) -> Option<u16> {
     let bytes = id.as_bytes();
     if !bytes.ends_with(&[0x10, 0, 0x80, 0, 0, 0x80, 0x5f, 0x9b, 0x34, 0xfb]) {
         return None;
@@ -165,18 +62,6 @@ fn uuid_to_id(id: Uuid) -> Option<u16> {
     let mut id_bytes = [0u8; 2];
     id_bytes.copy_from_slice(&bytes[2..4]);
     Some(u16::from_be_bytes(id_bytes))
-}
-
-async fn manu_model(dev: &Device) -> (Option<String>, Option<String>) {
-    let manu = read_char(dev, MANU).await;
-    let model = read_char(dev, MODEL).await;
-    (manu, model)
-}
-
-async fn read_char(dev: &Device, id: Uuid) -> Option<String> {
-    let ch = dev.characteristic(id).await.ok()??;
-    let bytes = ch.read().await.ok()?;
-    Some(String::from_utf8_lossy(&bytes).to_string())
 }
 
 fn generate_service_map() -> BTreeMap<u16, &'static str> {

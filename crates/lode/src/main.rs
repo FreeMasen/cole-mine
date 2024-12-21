@@ -17,6 +17,10 @@ type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 enum Commands {
     /// Determine what BTLE adapters are available
     FindAdapters,
+    /// Lookup the the services and characteristics for a device
+    ProbeDevice {
+        addr: DeviceIdentifier,
+    },
     /// Scan for devices.
     FindRings {
         /// If provided, all device addresses are printed to the terminal not just
@@ -152,6 +156,7 @@ async fn main() -> Result {
     }
     match Commands::parse() {
         Commands::FindAdapters => find_adapters().await,
+        Commands::ProbeDevice { addr } => probe_device(addr).await,
         Commands::FindRings {
             see_all,
             force_disconnect,
@@ -160,6 +165,68 @@ async fn main() -> Result {
         Commands::Goals { addr } => read_goals(addr).await,
         Commands::DeviceDetails { id } => get_device_details(id).await,
         Commands::SendCommand(cmd) => send_command(cmd).await,
+    }
+}
+
+async fn probe_device(addr: DeviceIdentifier) -> Result {
+    use futures::StreamExt;
+    let dev = match addr {
+        DeviceIdentifier::Mac(addr) => {
+            let mut s = bleasy::Scanner::new();
+            s.start(bleasy::ScanConfig::default().filter_by_address(move |w| w == addr))
+                .await?;
+            s
+                .device_stream()
+                .next()
+                .await
+                .ok_or_else(|| "No device found".to_string())?
+        },
+        DeviceIdentifier::Name(name) => {
+            find_device_by_name(&name).await?
+        }
+    };
+    print!("{}", dev.address());
+    if let Some(name) = dev.local_name().await {
+        println!(": {name}")
+    } else {
+        println!()
+    }
+    if let Some(rssi) = dev.rssi().await {
+        println!("rssi: {rssi}");
+    }
+    println!("Characteristics");
+    let charas = dev.characteristics().await.unwrap();
+    report_charas(&charas, 2);
+    println!("--------------------------");
+    println!("Services");
+    let services = dev.services().await.unwrap();
+    report_services(&services);
+    println!("--------------------------");
+    Ok(())
+}
+
+fn report_services(services: &[bleasy::Service]) {
+    for srv in services {
+        let s = if let Some(name) = ids::service_name_from(srv.uuid()) {
+            name.to_string()
+        } else {
+            srv.uuid().hyphenated().to_string()
+        };
+        println!("  {s}");
+        let charas = srv.characteristics();
+        report_charas(&charas, 4);
+    }
+}
+
+fn report_charas(charas: &[bleasy::Characteristic], indent: usize) {
+
+    for chara in charas {
+        let s = if let Some(name) = ids::charas_name_from(chara.uuid()) {
+            name.to_string()
+        } else {
+            chara.uuid().hyphenated().to_string()
+        };
+        println!("{}{s}", " ".repeat(indent));
     }
 }
 

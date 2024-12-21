@@ -67,4 +67,5 @@ pub(crate) const DEVICE_NAME_PREFIXES: &[&str] = &[
     "GL-SR2",
     "Blaupunkt",
     "KSIX RING",
+    "COLMI R"
 ];
