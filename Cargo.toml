@@ -16,7 +16,7 @@ futures = "0.3.31"
 log = "0.4.22"
 serde = { version = "1.0.215", features = ["derive"] }
 time = { version = "0.3.36", features = ["serde", "local-offset", "formatting", "macros"] }
-tokio = { version = "1.41.1", features = ["full"] }
+tokio = { version = "1.43.1", features = ["full"] }
 bon = "3"
 uuid = { version = "1.11.0", features = ["v4", "fast-rng", "serde"] }
 
